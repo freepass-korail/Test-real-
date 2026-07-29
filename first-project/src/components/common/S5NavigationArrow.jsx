@@ -1,0 +1,22 @@
+/** arrow.svg 경로를 인라인 SVG로 렌더링 — overflow visible 유지 */
+export const S5_ARROW_VIEWBOX = { width: 129, height: 172, pivotX: 64, pivotY: 86, halfExtent: 86 };
+
+const ARROW_PATH =
+  'M63.6767 0.000188355C67.6548 -0.0197319 71.4785 1.54113 74.3056 4.34003L124.3 53.84C130.186 59.6687 130.234 69.1661 124.405 75.0529C118.577 80.9395 109.079 80.9859 103.192 75.1574L78.7519 50.9601V156.751C78.7519 165.035 72.0359 171.751 63.7519 171.751C55.4676 171.751 48.7519 165.035 48.7519 156.751V51.4748L25.6601 74.8029C19.832 80.69 10.3346 80.7382 4.44717 74.9103C-1.44031 69.0824 -1.48815 59.585 4.33975 53.6975L53.0917 4.44648C55.8905 1.61933 59.6985 0.020202 63.6767 0.000188355Z';
+
+function S5NavigationArrow({ width, height }) {
+  return (
+    <svg
+      width={width}
+      height={height}
+      viewBox="0 0 129 172"
+      fill="none"
+      overflow="visible"
+      aria-hidden
+    >
+      <path d={ARROW_PATH} fill="#FFFFFF" />
+    </svg>
+  );
+}
+
+export default S5NavigationArrow;

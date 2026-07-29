@@ -1,0 +1,148 @@
+﻿{
+    "hasTicketToday":  true,
+    "message":  "5ë² ì¹ê°ì¥(n14)ì¼ë¡ ì´ëíì¸ì. 6í¸ì°¨ íì¹, ì´ 412m.",
+    "ticket":  {
+                   "ticketId":  19,
+                   "ticketNo":  "TK20260726001",
+                   "userId":  1,
+                   "trainNo":  "1079",
+                   "trainType":  "ITX",
+                   "depStation":  "ì ì²",
+                   "arrStation":  "ìí",
+                   "depPlatformNo":  5,
+                   "arrPlatformNo":  2,
+                   "depTime":  "2026-07-26T05:00:00Z",
+                   "arrTime":  "2026-07-26T06:05:00Z",
+                   "carNo":  6,
+                   "seatNo":  "2C",
+                   "price":  9700,
+                   "status":  "PAID"
+               },
+    "fromNode":  "n01",
+    "platformNode":  "n14",
+    "routeFound":  true,
+    "route":  [
+                  {
+                      "nodeId":  "n01",
+                      "name":  "3ì¸µ ì\u0085êµ¬",
+                      "lat":  37.1279096,
+                      "lng":  128.2056971,
+                      "guideNote":  null
+                  },
+                  {
+                      "nodeId":  "n02",
+                      "name":  "ì½ì½ì¤ ê°ë¦¼ê¸¸",
+                      "lat":  37.1278326,
+                      "lng":  128.2056689,
+                      "guideNote":  null
+                  },
+                  {
+                      "nodeId":  "n03",
+                      "name":  "1ë² íë«í¼ ì ê°ë¦¼ê¸¸",
+                      "lat":  37.1277891,
+                      "lng":  128.2058085,
+                      "guideNote":  null
+                  },
+                  {
+                      "nodeId":  "n06",
+                      "name":  "2,3 íë«í¼ ì ê°ë¦¼ê¸¸",
+                      "lat":  37.1276159,
+                      "lng":  128.2057095,
+                      "guideNote":  null
+                  },
+                  {
+                      "nodeId":  "n09",
+                      "name":  "4,5ë² íë«í¼ ì ê°ë¦¼ê¸¸",
+                      "lat":  37.1274347,
+                      "lng":  128.2056022,
+                      "guideNote":  null
+                  },
+                  {
+                      "nodeId":  "n10",
+                      "name":  "4,5ë² íë«í¼ ì¼ìª½ ì¹ê°ì¥",
+                      "lat":  37.1274097,
+                      "lng":  128.2056638,
+                      "guideNote":  "ìì¤ì»¬ë ì´í°ë¥¼ íê³  ë´ë ¤ê°ì¸ì"
+                  },
+                  {
+                      "nodeId":  "n14",
+                      "name":  "4,5 ì ìí",
+                      "lat":  37.126961,
+                      "lng":  128.2067474,
+                      "guideNote":  null
+                  }
+              ],
+    "directions":  [
+                       {
+                           "nodeId":  "n01",
+                           "name":  "3ì¸µ ì\u0085êµ¬",
+                           "maneuver":  "ì¶ë°",
+                           "turnAngle":  null,
+                           "headingBearing":  196.2775314628742,
+                           "distanceToNextM":  18.45,
+                           "cumulativeDistanceM":  0.0,
+                           "text":  "3ì¸µ ì\u0085êµ¬ìì ì¶ë°í´ 18m ì§ì§"
+                       },
+                       {
+                           "nodeId":  "n02",
+                           "name":  "ì½ì½ì¤ ê°ë¦¼ê¸¸",
+                           "maneuver":  "ì¢íì ",
+                           "turnAngle":  -84.93056635783796,
+                           "headingBearing":  111.34696510503625,
+                           "distanceToNextM":  18.85,
+                           "cumulativeDistanceM":  18.45,
+                           "text":  "ì½ì½ì¤ ê°ë¦¼ê¸¸ìì ì¢íì  í 19m ì´ë"
+                       },
+                       {
+                           "nodeId":  "n03",
+                           "name":  "1ë² íë«í¼ ì ê°ë¦¼ê¸¸",
+                           "maneuver":  "ì°íì ",
+                           "turnAngle":  93.15310279445544,
+                           "headingBearing":  204.50006789949168,
+                           "distanceToNextM":  25.508,
+                           "cumulativeDistanceM":  37.3,
+                           "text":  "1ë² íë«í¼ ì ê°ë¦¼ê¸¸ìì ì°íì  í 26m ì´ë"
+                       },
+                       {
+                           "nodeId":  "n06",
+                           "name":  "2,3 íë«í¼ ì ê°ë¦¼ê¸¸",
+                           "maneuver":  "ì§ì§",
+                           "turnAngle":  0.7732873922539056,
+                           "headingBearing":  205.27335529174556,
+                           "distanceToNextM":  23.189,
+                           "cumulativeDistanceM":  62.80799999999999,
+                           "text":  "2,3 íë«í¼ ì ê°ë¦¼ê¸¸ìì ì§ì§ í 23m ì´ë"
+                       },
+                       {
+                           "nodeId":  "n09",
+                           "name":  "4,5ë² íë«í¼ ì ê°ë¦¼ê¸¸",
+                           "maneuver":  "ì¢íì ",
+                           "turnAngle":  -88.29608530280814,
+                           "headingBearing":  116.97726998893745,
+                           "distanceToNextM":  4.375,
+                           "cumulativeDistanceM":  85.99699999999999,
+                           "text":  "4,5ë² íë«í¼ ì ê°ë¦¼ê¸¸ìì ì¢íì  í 4m ì´ë"
+                       },
+                       {
+                           "nodeId":  "n10",
+                           "name":  "4,5ë² íë«í¼ ì¼ìª½ ì¹ê°ì¥",
+                           "maneuver":  "ì§ì§",
+                           "turnAngle":  0.4678601752159466,
+                           "headingBearing":  117.4451301641534,
+                           "distanceToNextM":  321.264,
+                           "cumulativeDistanceM":  90.37199999999999,
+                           "text":  "4,5ë² íë«í¼ ì¼ìª½ ì¹ê°ì¥ìì ì§ì§ í 321m ì´ë"
+                       },
+                       {
+                           "nodeId":  "n14",
+                           "name":  "4,5 ì ìí",
+                           "maneuver":  "ëì°©",
+                           "turnAngle":  null,
+                           "headingBearing":  null,
+                           "distanceToNextM":  0.0,
+                           "cumulativeDistanceM":  411.63599999999997,
+                           "text":  "4,5 ì ìí ëì°©"
+                       }
+                   ],
+    "totalDistanceM":  411.63599999999997
+}

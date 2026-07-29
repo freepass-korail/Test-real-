@@ -1,0 +1,80 @@
+{
+  "_설명": {
+    "pathMode": "full|deviate|backtrack|pause|explicit — 실제 BE nodeId에 바인딩 (응답은 실제, 좌표 이동만 시나리오)",
+    "path": "explicit 모드일 때만 고정 노드 순서. 그 외는 pathMode로 자동",
+    "speedMps": "보행 속도 (m/s). 1.2=보통, 0.6=천천히, 2.0=빠름",
+    "deviate": "경로 옆으로 이탈. bearingDeg=이탈 방향(도), distanceM=이탈 거리, thenReturn=복귀 여부",
+    "backtrackTo": "이 노드까지 왔던 길을 되돌아감 (반대방향) — pathMode=backtrack 시 자동",
+    "pauseSec": "이 지점에서 몇 초간 정지",
+    "continueAfter": "이탈/후퇴/정지 후 이어서 가는 노드들 — pathMode 사용 시 자동",
+    "expect": "합격 기준. true면 만족해야 통과, 숫자면 그 이하여야 통과",
+    "비고_이탈거리": "앱 OFF_ROUTE_THRESHOLD_M=20 이라 이탈 감지를 보려면 distanceM≥25 권장",
+    "비고_가짜데이터": "시뮬레이션은 GPS 좌표열만. guide/steps·TTS는 항상 실제 BE (page.route 없음)"
+  },
+  "_공통검증": {
+    "설명": "모든 시나리오에 공통 적용되는 3축 기준",
+    "거리정확도": { "distanceErrorP50M": 15, "distanceErrorP95M": 30 },
+    "거리단조성": { "monotonicViolations": 0, "비고": "전진 구간 한정. 이탈/후퇴 구간은 제외" },
+    "화살표": { "maxArrowJumpDeg": 90, "arrowStableWhilePausedDeg": 10 },
+    "안내노드": { "missedTurns": 0, "duplicateAnnounce": 0 }
+  },
+  "scenarios": [
+    {
+      "name": "1_해피케이스",
+      "desc": "출발부터 도착까지 정상 속도로 완주. 모든 안내가 제때, 거리가 매끄럽게 감소.",
+      "재현": "BE 경로 전체를 1.2m/s로 정상 완주 (좌표만 시나리오)",
+      "핵심검증": "기본 동작이 모두 되는가",
+      "pathMode": "full",
+      "speedMps": 1.2,
+      "expect": {
+        "reachesEnd": true,
+        "announcesAllTurns": true,
+        "noDuplicateAnnounce": true,
+        "distanceMonotonic": true,
+        "distanceErrorP95M": 30,
+        "voicePlaysOnAnnounce": true
+      }
+    },
+    {
+      "name": "2a_옆으로_이탈후_복귀",
+      "desc": "중간 노드에서 경로 옆으로 벗어났다가 다시 경로로 복귀 후 계속. (앱 임계 20m → 35m 이탈)",
+      "재현": "중간까지 정상 → 옆으로 35m 이탈 → 복귀 → 목적지까지",
+      "핵심검증": "이탈을 감지하는가 / 복귀 후 정상화되는가",
+      "pathMode": "deviate",
+      "deviate": { "bearingDeg": 90, "distanceM": 35, "thenReturn": true },
+      "speedMps": 1.2,
+      "expect": {
+        "offRouteDetected": true,
+        "recoversAfterReturn": true,
+        "reachesEnd": true
+      }
+    },
+    {
+      "name": "2b_반대방향_후퇴후_재전진",
+      "desc": "중간까지 갔다가 되돌아간 뒤 다시 목적지로. 후퇴 시 거리 증가, 재진입 시 재안내.",
+      "재현": "중간까지 정상 → 되돌아감 → 다시 전진 → 목적지까지",
+      "핵심검증": "후퇴 시 거리가 늘어나는가 / 재진입 시 안내가 다시 나오는가",
+      "pathMode": "backtrack",
+      "speedMps": 1.0,
+      "expect": {
+        "distanceIncreasesOnBacktrack": true,
+        "reAnnouncesOnReturn": true,
+        "reachesEnd": true
+      }
+    },
+    {
+      "name": "3_중간정지",
+      "desc": "중간에서 정지. 멈춰 있을 때 거리·화살표가 흔들리지 않아야 함.",
+      "재현": "중간까지 정상 → 정지 → 다시 출발 → 목적지까지",
+      "핵심검증": "멈춰 있을 때 거리·화살표가 흔들리지 않는가",
+      "pathMode": "pause",
+      "pauseSec": 20,
+      "speedMps": 1.2,
+      "expect": {
+        "distanceStableWhilePaused": true,
+        "arrowStableWhilePaused": true,
+        "reachesEnd": true
+      }
+    }
+  ]
+}

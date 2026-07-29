@@ -1,0 +1,106 @@
+{
+  "hasTicketToday": true,
+  "message": "5번 승강장(n14)으로 이동하세요. 6호차 탑승, 총 412m.",
+  "ticket": {
+    "ticketId": 19,
+    "ticketNo": "TK20260726001",
+    "userId": 1,
+    "trainNo": "1079",
+    "trainType": "ITX",
+    "depStation": "제천",
+    "arrStation": "양평",
+    "depPlatformNo": 5,
+    "arrPlatformNo": 2,
+    "depTime": "2026-07-27T05:00:00Z",
+    "arrTime": "2026-07-27T06:05:00Z",
+    "carNo": 6,
+    "seatNo": "2C",
+    "price": 9700,
+    "status": "PAID"
+  },
+  "fromNode": "n01",
+  "platformNode": "n14",
+  "routeFound": true,
+  "route": [
+    { "nodeId": "n01", "name": "3층 입구", "lat": 37.1279096, "lng": 128.2056971, "guideNote": null },
+    { "nodeId": "n02", "name": "콘코스 갈림길", "lat": 37.1278326, "lng": 128.2056689, "guideNote": null },
+    { "nodeId": "n03", "name": "1번 플랫폼 앞 갈림길", "lat": 37.1277891, "lng": 128.2058085, "guideNote": null },
+    { "nodeId": "n06", "name": "2,3 플랫폼 앞 갈림길", "lat": 37.1276159, "lng": 128.2057095, "guideNote": null },
+    { "nodeId": "n09", "name": "4,5번 플랫폼 앞 갈림길", "lat": 37.1274347, "lng": 128.2056022, "guideNote": null },
+    { "nodeId": "n10", "name": "4,5번 플랫폼 우측 승강장", "lat": 37.1274097, "lng": 128.2056638, "guideNote": "에스컬레이터를 타고 내려가세요" },
+    { "nodeId": "n14", "name": "4,5 저상홈", "lat": 37.126961, "lng": 128.2067474, "guideNote": null }
+  ],
+  "directions": [
+    {
+      "nodeId": "n01",
+      "name": "3층 입구",
+      "maneuver": "출발",
+      "turnAngle": null,
+      "headingBearing": 200,
+      "distanceToNextM": 18.45,
+      "cumulativeDistanceM": 0,
+      "text": "3층 입구에서 출발"
+    },
+    {
+      "nodeId": "n02",
+      "name": "콘코스 갈림길",
+      "maneuver": "직진",
+      "turnAngle": 0,
+      "headingBearing": 200,
+      "distanceToNextM": 18.85,
+      "cumulativeDistanceM": 18.45,
+      "text": "콘코스 갈림길에서 직진"
+    },
+    {
+      "nodeId": "n03",
+      "name": "1번 플랫폼 앞 갈림길",
+      "maneuver": "직진",
+      "turnAngle": 0,
+      "headingBearing": 200,
+      "distanceToNextM": 25.508,
+      "cumulativeDistanceM": 37.3,
+      "text": "1번 플랫폼 앞 갈림길에서 직진"
+    },
+    {
+      "nodeId": "n06",
+      "name": "2,3 플랫폼 앞 갈림길",
+      "maneuver": "직진",
+      "turnAngle": 0,
+      "headingBearing": 200,
+      "distanceToNextM": 23.189,
+      "cumulativeDistanceM": 62.808,
+      "text": "2,3 플랫폼 앞 갈림길에서 직진"
+    },
+    {
+      "nodeId": "n09",
+      "name": "4,5번 플랫폼 앞 갈림길",
+      "maneuver": "좌회전",
+      "turnAngle": -88.3,
+      "headingBearing": 117,
+      "distanceToNextM": 4.375,
+      "cumulativeDistanceM": 85.997,
+      "text": "4,5번 플랫폼 앞 갈림길에서 좌회전"
+    },
+    {
+      "nodeId": "n10",
+      "name": "4,5번 플랫폼 우측 승강장",
+      "maneuver": "직진",
+      "turnAngle": 0.47,
+      "headingBearing": 117.4,
+      "distanceToNextM": 321.264,
+      "cumulativeDistanceM": 90.372,
+      "text": "4,5번 플랫폼 우측 승강장에서 직진 후 321m 이동"
+    },
+    {
+      "nodeId": "n14",
+      "name": "4,5 저상홈",
+      "maneuver": "도착",
+      "turnAngle": null,
+      "headingBearing": null,
+      "distanceToNextM": 0,
+      "cumulativeDistanceM": 411.636,
+      "text": "4,5 저상홈 도착"
+    }
+  ],
+  "totalDistanceM": 411.636
+}
