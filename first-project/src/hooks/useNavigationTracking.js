@@ -28,6 +28,8 @@ import { GUIDE_STATE } from '../utils/guideStates';
 const PAN_THROTTLE_MS = 2000;
 /** 이 속도(m/s) 이상이면 GPS course를 화살표 heading으로 우선 */
 const GPS_COURSE_MIN_SPEED_MPS = 0.6;
+/** 최종 노드 근처에서만 반대방향을 '지나침'으로 해석 */
+const WRONG_DIR_OVERSHOOT_NEAR_M = 30;
 
 function useNavigationTracking({ enabled = true, onArrived } = {}) {
   const hasArrivedRef = useRef(false);
@@ -242,7 +244,11 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
       }
 
       const isWrongDirection = wrongDirHitsRef.current >= WRONG_DIR_CONFIRM_HITS;
-      const isOvershoot = lastNodeOvershoot || isWrongDirection;
+      const canTreatWrongDirAsOvershoot =
+        isLastStep &&
+        (distToLastNode <= WRONG_DIR_OVERSHOOT_NEAR_M ||
+          minDistanceRef.current <= WRONG_DIR_OVERSHOOT_NEAR_M);
+      const isOvershoot = lastNodeOvershoot || (isWrongDirection && canTreatWrongDirAsOvershoot);
 
       let nextAltRoute = prevAltRoute;
       if (!isOvershoot && !(isLastStep && rawDistanceM <= OVERSHOOT_THRESHOLD_M)) {
@@ -324,7 +330,15 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
   const handleHeadingUpdate = useCallback(
     (heading) => {
       headingReadyRef.current = true;
-      const { position, bearing: storedBearing, destination: dest, overshoot } =
+      const {
+        position,
+        bearing: storedBearing,
+        destination: dest,
+        overshoot,
+        routeSteps,
+        currentStepIndex,
+        distanceM,
+      } =
         useFlowStore.getState();
       if (!dest?.lat || !dest?.lng) return;
 
@@ -354,7 +368,14 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
       lastAngleTsRef.current = angleTs;
 
       const isWrongDirection = wrongDirHitsRef.current >= WRONG_DIR_CONFIRM_HITS;
-      const isOvershoot = lastNodeOvershootRef.current || isWrongDirection;
+      const lastIdx = (routeSteps?.length ?? 0) - 1;
+      const onFinalStep = lastIdx >= 0 && currentStepIndex >= lastIdx;
+      const nearLastByUiRemain = distanceM != null && Number(distanceM) <= WRONG_DIR_OVERSHOOT_NEAR_M;
+      const canTreatWrongDirAsOvershoot =
+        onFinalStep &&
+        (nearLastByUiRemain || minDistanceRef.current <= WRONG_DIR_OVERSHOOT_NEAR_M);
+      const isOvershoot =
+        lastNodeOvershootRef.current || (isWrongDirection && canTreatWrongDirAsOvershoot);
       const angleShown = Math.round(destinationAngle);
 
       // 각도 2° 이상 변하거나 overshoot 바뀔 때만 갱신
