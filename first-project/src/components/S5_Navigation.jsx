@@ -97,6 +97,7 @@ function DepartureExpiredOverlay({ info, s5, text, message, onClose }) {
         position: 'absolute', top: 667, left: 40, width: 280, height: 90,
         fontFamily: FF, fontSize: 32, fontWeight: 600, color: '#FFFFFF',
         lineHeight: '140%', letterSpacing: 0, margin: 0, whiteSpace: 'pre-line',
+        wordBreak: 'keep-all',
       }}>
         {message}
       </p>

@@ -3,7 +3,11 @@ import {
   getDistanceMeters,
   GEOLOCATION_OPTIONS,
   getGeolocationErrorMessage,
+  GPS_MAX_ACCURACY_M,
+  GPS_POS_SMOOTH_ALPHA_LOW_ACC,
+  GPS_SOFT_ACCURACY_M,
   PERMISSION_REQUEST_OPTIONS,
+  smoothLatLng,
 } from '../utils/geo';
 
 /**
@@ -43,6 +47,7 @@ function useGeolocation() {
   const pollIdRef = useRef(null);
   const rebindIdRef = useRef(null);
   const lastRawPosRef = useRef(null);
+  const lastSmoothedPosRef = useRef(null);
   const onUpdateRef = useRef(null);
   const watchOptionsRef = useRef(GEOLOCATION_OPTIONS);
   const [position, setPosition] = useState(null);
@@ -50,10 +55,11 @@ function useGeolocation() {
   const [isWatching, setIsWatching] = useState(false);
 
   const emitRaw = useCallback((pos) => {
+    const accuracy = pos.coords.accuracy;
     const raw = {
       lat: pos.coords.latitude,
       lng: pos.coords.longitude,
-      accuracy: pos.coords.accuracy,
+      accuracy,
       timestamp: pos.timestamp ?? Date.now(),
     };
 
@@ -62,12 +68,27 @@ function useGeolocation() {
       const moved = getDistanceMeters(prev.lat, prev.lng, raw.lat, raw.lng);
       if (moved < MOVE_EPS_M) return;
     }
-
-    // accuracy·속도 게이트 없음. Sensors 순간이동·실GPS 모두 lat/lng 변화를 즉시 전달
     lastRawPosRef.current = raw;
-    setPosition(raw);
+
+    // accuracy 컷 — 위치 서비스 켠 직후 등 정확도가 매우 낮은(hard 초과) 샘플은
+    // 내비게이션에 반영하지 않고 다음 fix를 기다린다 (Sensors/E2E는 accuracy:5라 영향 없음).
+    if (accuracy != null && accuracy > GPS_MAX_ACCURACY_M) {
+      console.warn(`[GPS] accuracy=${Math.round(accuracy)}m > ${GPS_MAX_ACCURACY_M}m — 샘플 무시`);
+      return;
+    }
+
+    // soft~hard 구간(25~50m)은 버리지 않되, 이전 위치 쪽으로 낮은 가중치만 반영해
+    // 화면이 부정확한 좌표로 확 튀지 않게 한다. accuracy 좋은 샘플은 그대로 통과.
+    const prevSmoothed = lastSmoothedPosRef.current;
+    const smoothed =
+      accuracy != null && accuracy > GPS_SOFT_ACCURACY_M && prevSmoothed
+        ? smoothLatLng(prevSmoothed, raw, GPS_POS_SMOOTH_ALPHA_LOW_ACC)
+        : raw;
+    lastSmoothedPosRef.current = smoothed;
+
+    setPosition(smoothed);
     setError(null);
-    onUpdateRef.current?.(raw, pos);
+    onUpdateRef.current?.(smoothed, pos);
   }, []);
 
   const clearWatchOnly = useCallback(() => {
@@ -100,6 +121,7 @@ function useGeolocation() {
       rebindIdRef.current = null;
     }
     lastRawPosRef.current = null;
+    lastSmoothedPosRef.current = null;
     onUpdateRef.current = null;
     setIsWatching(false);
   }, [clearWatchOnly]);

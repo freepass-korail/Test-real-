@@ -8,11 +8,14 @@ import {
   getBearing,
   getDistanceMeters,
   getStepArrivalRadiusM,
+  GPS_MAX_ACCURACY_M,
+  GPS_SOFT_ACCURACY_M,
   MAX_TURN_DEG_PER_SEC,
   normalizeAngle,
   resolveStepIndexFromProgress,
   shortestAngleDelta,
   shouldArriveByRemain,
+  smoothLatLng,
   stepAngleTowards,
   STEP_ARRIVAL_RADIUS_M,
 } from './geo.js';
@@ -237,5 +240,25 @@ describe('getArrowAimPoint (look-ahead)', () => {
     const aim = getArrowAimPoint(pos, steps, 2); // target = 마지막 노드
     expect(aim.lat).toBeCloseTo(steps[2].lat, 9);
     expect(aim.lng).toBeCloseTo(steps[2].lng, 9);
+  });
+});
+
+describe('smoothLatLng', () => {
+  it('snaps to next when there is no previous position', () => {
+    const next = { lat: 1, lng: 2, accuracy: 5 };
+    expect(smoothLatLng(null, next)).toEqual(next);
+  });
+
+  it('blends only a fraction of the way toward next (low-accuracy weighting)', () => {
+    const prev = { lat: 0, lng: 0 };
+    const next = { lat: 1, lng: 0 };
+    const blended = smoothLatLng(prev, next, 0.08);
+    expect(blended.lat).toBeCloseTo(0.08, 5);
+    expect(blended.lat).toBeGreaterThan(prev.lat);
+    expect(blended.lat).toBeLessThan(next.lat);
+  });
+
+  it('GPS_SOFT_ACCURACY_M is stricter than GPS_MAX_ACCURACY_M (soft/hard cut ordering)', () => {
+    expect(GPS_SOFT_ACCURACY_M).toBeLessThan(GPS_MAX_ACCURACY_M);
   });
 });
