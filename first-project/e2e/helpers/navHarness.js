@@ -390,13 +390,17 @@ export async function playScenario(page, scenario, guide, pace = getPace()) {
 
     if (!snap) continue;
 
-    if (snap.announcedPassIndex != null && snap.announcedPassIndex > lastAnnounced) {
-      for (let i = lastAnnounced + 1; i <= snap.announcedPassIndex; i += 1) {
-        const nodeId = await page.evaluate(
-          (idx) => window.__FLOW_STORE__.getState().routeSteps?.[idx]?.nodeId,
-          i,
-        );
-        if (nodeId) announcedNodes.push(nodeId);
+    if (snap.announcedPassIndex != null && snap.announcedPassIndex !== lastAnnounced) {
+      // 전진(index 증가)만 새 안내로 기록. 후퇴(index 감소)는 되감기일 뿐 —
+      // 이후 같은 인덱스를 다시 전진해서 지나가면 재안내로 다시 기록돼야 함.
+      if (snap.announcedPassIndex > lastAnnounced) {
+        for (let i = lastAnnounced + 1; i <= snap.announcedPassIndex; i += 1) {
+          const nodeId = await page.evaluate(
+            (idx) => window.__FLOW_STORE__.getState().routeSteps?.[idx]?.nodeId,
+            i,
+          );
+          if (nodeId) announcedNodes.push(nodeId);
+        }
       }
       lastAnnounced = snap.announcedPassIndex;
       await e2eLog(

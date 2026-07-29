@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import useFlowStore from '../store/useFlowStore';
 import {
   ARRIVAL_RADIUS_M,
+  getArrowAimPoint,
   getArrowRotation,
   getBearing,
   getDistanceMeters,
@@ -15,6 +16,7 @@ import {
   OVERSHOOT_THRESHOLD_M,
   resolveStepIndexFromProgress,
   shouldArriveByRemain,
+  stepAngleTowards,
   WRONG_DIRECTION_ANGLE_DEG,
   WRONG_DIRECTION_AWAY_M,
 } from '../utils/geo';
@@ -42,6 +44,9 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
   const lastPassRef = useRef(-1);
   /** 실제 나침반 이벤트를 받기 전엔 heading=0 고정 → 반대방향 오판 방지 */
   const headingReadyRef = useRef(false);
+  /** 화살표 표시각 — 실시간 반감기 감쇠 + 초당 회전각 상한 적용 (원시 방위각과 별개) */
+  const smoothedAngleRef = useRef(0);
+  const lastAngleTsRef = useRef(null);
   /** Sensors 폴링(250ms) 기준 — 1회면 GPS 한 틱에 조기 도착할 수 있어 2회 */
   const ARRIVAL_CONFIRM_HITS = 2;
   const WRONG_DIR_CONFIRM_HITS = 2;
@@ -187,8 +192,25 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
         ? distToLastNode
         : getDistanceMeters(pos.lat, pos.lng, dest.lat, dest.lng);
 
-      const bearing = getBearing(pos.lat, pos.lng, dest.lat, dest.lng);
-      const destinationAngle = getArrowRotation(bearing, heading);
+      // 화살표는 목표 노드에 근접하면 다음 노드 쪽으로 미리 방향을 틀어,
+      // 노드를 스치는 순간 방위각이 급변하는 걸 완화한다 (거리·도착 판정은 dest 그대로 사용)
+      const aimPoint = isLastStep ? dest : (getArrowAimPoint(pos, steps, targetIndex) ?? dest);
+      const bearing = getBearing(pos.lat, pos.lng, aimPoint.lat, aimPoint.lng);
+      const rawDestinationAngle = getArrowRotation(bearing, heading);
+
+      // 화면에 표시할 각도는 실제 경과 시간(dt) 기준 반감기 감쇠 + 초당 회전각 상한을 적용
+      // (자기장 왜곡 등으로 원시 목표각이 순간적으로 크게 튀어도 회전 속도는 일정하게 유지)
+      const angleTs = geoPos?.timestamp ?? Date.now();
+      const destinationAngle =
+        lastAngleTsRef.current == null
+          ? rawDestinationAngle
+          : stepAngleTowards(
+              smoothedAngleRef.current,
+              rawDestinationAngle,
+              angleTs - lastAngleTsRef.current,
+            );
+      smoothedAngleRef.current = destinationAngle;
+      lastAngleTsRef.current = angleTs;
 
       if (isLastStep && rawDistanceM < minDistanceRef.current) {
         minDistanceRef.current = rawDistanceM;
@@ -200,9 +222,10 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
         rawDistanceM > minDistanceRef.current + OVERSHOOT_THRESHOLD_M;
       lastNodeOvershootRef.current = lastNodeOvershoot;
 
+      // 반대방향 판정은 화면 표시각이 아니라 원시 방위각 기준 (지연 없이 즉시 반응해야 함)
       const facingOpposite =
         headingReadyRef.current &&
-        Math.abs(destinationAngle) >= WRONG_DIRECTION_ANGLE_DEG;
+        Math.abs(rawDestinationAngle) >= WRONG_DIRECTION_ANGLE_DEG;
       const prevRaw = prevRawDistanceRef.current;
       const movingAway =
         prevRaw != null && rawDistanceM >= prevRaw + WRONG_DIRECTION_AWAY_M;
@@ -308,15 +331,27 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
       const bearing =
         storedBearing ??
         (position ? getBearing(position.lat, position.lng, dest.lat, dest.lng) : null);
-      const destinationAngle = bearing != null ? getArrowRotation(bearing, heading) : 0;
+      const rawDestinationAngle = bearing != null ? getArrowRotation(bearing, heading) : 0;
 
       if (bearing != null) {
-        if (Math.abs(destinationAngle) >= WRONG_DIRECTION_ANGLE_DEG) {
+        if (Math.abs(rawDestinationAngle) >= WRONG_DIRECTION_ANGLE_DEG) {
           wrongDirHitsRef.current += 1;
         } else {
           wrongDirHitsRef.current = Math.max(0, wrongDirHitsRef.current - 1);
         }
       }
+
+      const angleTs = Date.now();
+      const destinationAngle =
+        lastAngleTsRef.current == null
+          ? rawDestinationAngle
+          : stepAngleTowards(
+              smoothedAngleRef.current,
+              rawDestinationAngle,
+              angleTs - lastAngleTsRef.current,
+            );
+      smoothedAngleRef.current = destinationAngle;
+      lastAngleTsRef.current = angleTs;
 
       const isWrongDirection = wrongDirHitsRef.current >= WRONG_DIR_CONFIRM_HITS;
       const isOvershoot = lastNodeOvershootRef.current || isWrongDirection;
@@ -357,6 +392,8 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
     lastNavSigRef.current = '';
     lastPassRef.current = -1;
     headingReadyRef.current = false;
+    smoothedAngleRef.current = 0;
+    lastAngleTsRef.current = null;
     const steps = useFlowStore.getState().routeSteps || [];
     const firstTarget = steps.length > 1 ? 1 : 0;
     const initialRemain = getRemainingToTargetM(0, firstTarget, steps);

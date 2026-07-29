@@ -61,6 +61,76 @@ export const HEADING_DEADBAND_DEG = 8;
 /** 화살표가 목표각을 따라가는 속도 (작을수록 덜 튐) */
 export const ARROW_FOLLOW = 0.06;
 
+/**
+ * 목표 방위각 반감기(ms) — dt(경과 시간) 동안 남은 각도 차이의 몇 %를 좁힐지 결정.
+ * requestAnimationFrame 프레임률에 의존하지 않고 실제 경과 시간 기준으로 동작한다.
+ * 클수록 목표각을 향해 더 천천히·부드럽게 따라간다.
+ */
+export const ARROW_HALF_LIFE_MS = 450;
+
+/** 화살표가 초당 이 각도(°) 이상 회전하지 못하도록 상한 — 실내 자기장 왜곡 등으로
+ *  목표각이 순간적으로 크게 튀어도 회전 속도 자체는 일정하게 유지한다. */
+export const MAX_TURN_DEG_PER_SEC = 120;
+
+/**
+ * 실시간 경과(dt)를 반영한 반감기 감쇠 + 초당 회전각 상한을 적용해 다음 각도를 계산한다.
+ * (turn-by-turn 내비게이션에서 흔히 쓰는 방식: "얼마나 빨리 따라잡을지"와
+ *  "최대 얼마나 빨리 돌 수 있는지"를 분리해서, 큰 목표 변화에도 회전 속도가 일정하다.)
+ * @param {number} prev 이전 각도(°)
+ * @param {number} target 목표 각도(°)
+ * @param {number} dtMs 이전 갱신 이후 실제 경과 시간(ms)
+ */
+export function stepAngleTowards(
+  prev,
+  target,
+  dtMs,
+  { halfLifeMs = ARROW_HALF_LIFE_MS, maxDegPerSec = MAX_TURN_DEG_PER_SEC } = {},
+) {
+  if (dtMs == null || dtMs <= 0) return prev;
+  const delta = shortestAngleDelta(prev, target);
+  const decay = 1 - 2 ** (-dtMs / halfLifeMs);
+  let step = delta * decay;
+  const maxStep = maxDegPerSec * (dtMs / 1000);
+  if (Math.abs(step) > maxStep) {
+    step = Math.sign(step) * maxStep;
+  }
+  return normalizeAngle(prev + step);
+}
+
+/**
+ * 목표 노드에 이 거리(m) 안으로 들어오면, 화살표가 가리키는 지점을 다음 노드 쪽으로
+ * 서서히 옮겨 계산한다 (turn-by-turn 내비게이션의 "회전 예고"와 동일한 방식).
+ * 노드가 촘촘할 때(예: n06↔n07≈6m) 통과 직후 목표가 바뀌며 방위각이 급변하는 걸 막는다.
+ */
+export const DEST_LOOKAHEAD_M = 4;
+
+/**
+ * 화살표가 실제로 겨냥할 지점. 목표 노드에 근접할수록 다음 노드 방향으로 선형 보간한다.
+ * (도착/이탈 판정용 거리 계산에는 쓰지 않음 — 오직 화살표 방향 계산 전용)
+ * @param {{ lat: number, lng: number }} pos
+ * @param {Array<{ lat: number, lng: number }>} steps
+ * @param {number} targetIndex
+ * @returns {{ lat: number, lng: number } | null}
+ */
+export function getArrowAimPoint(pos, steps = [], targetIndex = 0) {
+  const lastIdx = steps.length - 1;
+  const dest = steps[targetIndex];
+  if (!dest?.lat || !dest?.lng) return dest ?? null;
+  if (targetIndex >= lastIdx) return dest; // 마지막 노드는 그대로 겨냥
+
+  const next = steps[targetIndex + 1];
+  if (!next?.lat || !next?.lng) return dest;
+
+  const distToTarget = getDistanceMeters(pos.lat, pos.lng, dest.lat, dest.lng);
+  if (distToTarget >= DEST_LOOKAHEAD_M) return dest;
+
+  const blend = 1 - distToTarget / DEST_LOOKAHEAD_M; // 0(반경 밖)~1(노드 위)
+  return {
+    lat: dest.lat + (next.lat - dest.lat) * blend,
+    lng: dest.lng + (next.lng - dest.lng) * blend,
+  };
+}
+
 /** 나침반 링 위 목적지 점 좌표 (0°=위, 시계방향) */
 export function getCompassDotPosition(cx, cy, radius, angleDeg, dotWidth, dotHeight) {
   const rad = (angleDeg * Math.PI) / 180;
@@ -584,85 +654,6 @@ export function getPlanarRouteLengthM(steps = []) {
     len += getDistanceMeters(a.lat, a.lng, b.lat, b.lng);
   }
   return Math.max(0, len);
-}
-
-/**
- * GPS 기준 "지금 향해야 할" 노드 인덱스를 매번 재계산한다.
- * @deprecated 경로 진행거리 s 기반 resolveStepIndexFromProgress 사용 권장
- *
- * 주의: 노드 간격이 도착 반경보다 짧을 수 있음(n06↔n07 ≈ 6m).
- * 그래서 "아무 노드나 반경 안이면 k+1"로 점프하지 않고,
- * 폴리라인 투영 + (현재 목표 반경 진입 시) 한 칸만 전진한다.
- *
- * @param {{ lat: number, lng: number }} pos
- * @param {Array<{ lat: number, lng: number }>} steps
- * @param {number} [currentIndex] 현재 목표 인덱스 (앞으로 갈 때 한 칸씩만 진행)
- * @returns {number}
- */
-export function resolveActiveStepIndex(pos, steps = [], currentIndex = 0) {
-  if (!pos || !steps.length) return 0;
-  if (steps.length === 1) return 0;
-
-  const lastIdx = steps.length - 1;
-  const cur = Math.max(0, Math.min(lastIdx, Number(currentIndex) || 0));
-  const distLast = getDistanceMeters(pos.lat, pos.lng, steps[lastIdx].lat, steps[lastIdx].lng);
-
-  // 최종 세그먼트 위에서 목적지 접근권일 때만 끝으로 고정 (중간 n06/n07 스킵 방지)
-  const { segmentIndex, t } = getClosestPointOnRoute(pos, steps);
-  if (segmentIndex >= lastIdx - 1 && distLast <= ARRIVAL_APPROACH_M) {
-    return lastIdx;
-  }
-  if (distLast <= ARRIVAL_RADIUS_M) {
-    return lastIdx;
-  }
-
-  // 투영 기반 기본 목표
-  let target = Math.min(lastIdx, segmentIndex + 1);
-
-  // 아직 첫 노드로 가는 중
-  const startNode = steps[segmentIndex];
-  const distStart = getDistanceMeters(pos.lat, pos.lng, startNode.lat, startNode.lng);
-  if (segmentIndex === 0 && t < 0.25 && distStart > STEP_ARRIVAL_RADIUS_M) {
-    target = 0;
-  }
-
-  // 현재 목표 노드에 "도착"했을 때만 한 칸 전진
-  // 반경 = 인접 구간(이전↔현재, 현재↔다음) 중 짧은 쪽 기준
-  // → n07 목표인데 n06에 서 있으면(6m) 반경≈2m라서 아직 도착 아님
-  const curDest = steps[cur];
-  const prevDest = cur > 0 ? steps[cur - 1] : null;
-  const nextDest = cur < lastIdx ? steps[cur + 1] : null;
-  if (cur < lastIdx && curDest) {
-    const radiusIn = prevDest
-      ? getStepArrivalRadiusM(prevDest, curDest)
-      : STEP_ARRIVAL_RADIUS_M;
-    const radiusOut = nextDest
-      ? getStepArrivalRadiusM(curDest, nextDest)
-      : STEP_ARRIVAL_RADIUS_M;
-    const radius = Math.min(radiusIn, radiusOut);
-
-    const distCur = getDistanceMeters(pos.lat, pos.lng, curDest.lat, curDest.lng);
-    const distNext = nextDest
-      ? getDistanceMeters(pos.lat, pos.lng, nextDest.lat, nextDest.lng)
-      : Infinity;
-
-    if (distCur <= radius && distCur <= distNext) {
-      target = Math.max(target, cur + 1);
-    }
-  }
-
-  // 앞으로 갈 때는 한 번에 +1까지만
-  if (target > cur + 1) {
-    target = cur + 1;
-  }
-
-  // 뒤로 갈 때는 투영이 확실히 이전 구간(cur-1 미만)일 때만
-  // (n06에 있는데 목표가 n07이면 유지 — 6m 떨어져 있어도 n07 안내가 보이게)
-  if (target < cur && segmentIndex >= cur - 1) {
-    target = cur;
-  }
-
-  return target;
 }
 
 export function getGeolocationErrorMessage(code) {

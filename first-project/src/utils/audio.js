@@ -1,7 +1,4 @@
 let currentAudio = null;
-/** 따라잡기용 순차 재생 큐 */
-let audioQueue = [];
-let queuePlaying = false;
 
 /** base64 → 미리 로드된 Audio 엘리먼트 */
 const preloadedAudioByBase64 = new Map();
@@ -94,28 +91,12 @@ function playOneBase64(base64, { onEnded } = {}) {
   }
 }
 
-function drainAudioQueue() {
-  if (queuePlaying) return;
-  if (!audioQueue.length) return;
-
-  queuePlaying = true;
-  const next = audioQueue.shift();
-  playOneBase64(next, {
-    onEnded: () => {
-      queuePlaying = false;
-      drainAudioQueue();
-    },
-  });
-}
-
 /**
- * base64 MP3 — 이전 재생·큐 중단 후 즉시 재생
+ * base64 MP3 — 이전 재생 중단 후 즉시 재생
  * @param {string | null | undefined} base64
  */
 export function playBase64Audio(base64) {
   if (!base64) return;
-  audioQueue = [];
-  queuePlaying = false;
   playOneBase64(base64);
 }
 
@@ -134,14 +115,10 @@ export function playBase64AudioQueue(base64List = []) {
     console.info(`[TTS] 밀린 ${items.length}개 → 최신 1개만 즉시 재생`);
   }
 
-  audioQueue = [];
-  queuePlaying = false;
   playOneBase64(latest);
 }
 
-/** 현재 재생 중인 오디오·큐를 중단합니다. */
+/** 현재 재생 중인 오디오를 중단합니다. */
 export function stopAudio() {
-  audioQueue = [];
-  queuePlaying = false;
   stopCurrentAudioSync();
 }
