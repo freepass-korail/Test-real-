@@ -111,6 +111,14 @@ https://freepass-korail.vercel.app/?ticketId=19
 - HTTPS(또는 localhost)에서 위치·나침반 동작
 - 카카오톡 인앱 브라우저는 위치 권한 이슈 가능 → Safari 권장
 
+### Unit test (Vitest)
+
+`geo.js`의 도착 판정·진행거리 역산·화살표 회전각 로직 등 순수 함수 검증.
+
+```bash
+npm test
+```
+
 ### E2E (Playwright)
 
 GPS만 시나리오 주입. `guide` / TTS는 **실제 BE**.
@@ -156,6 +164,9 @@ Vercel 연결. API가 다른 도메인이면 `VITE_API_PROXY_TARGET` 또는 `/ap
 | `ROUTE_NODE_SNAP_M` | 3m | 중간 노드 cum 스냅 |
 | `OVERSHOOT_THRESHOLD_M` | 15m | 지나침 |
 | `OFF_ROUTE_THRESHOLD_M` | 20m | 경로 이탈 |
+| `MAX_TURN_DEG_PER_SEC` | 120°/s | 화살표 초당 최대 회전각 — 자기장 왜곡으로 heading이 순간 뒤집혀도 회전 속도는 일정 |
+| `ARROW_HALF_LIFE_MS` | 450ms | 위 상한 안에서 목표각을 얼마나 빨리 따라잡을지(반감기 감쇠) |
+| `DEST_LOOKAHEAD_M` | 4m | 목표 노드 근접 시 다음 노드 쪽으로 조준점을 미리 트는 반경 |
 
 ---
 
@@ -177,5 +188,6 @@ first-project/
 
 ## sessionStorage
 
-재개용으로 `step`, `routeSteps` 등만 저장한다.
-`ticketInfo` / `progressM` / `currentInstruction` / `audioMap` 등은 저장하지 않으며, **S5_1(도착)** 도 복원하지 않는다.
+재접속 시 "재개"로 인해 예전 경로(routeSteps)가 GPS와 맞물려 곧장 도착 상태로
+튀는 문제가 있어, 세션 저장·복원(`saveSession`/`loadSession`)은 **전면
+비활성화**되어 있다. 재접속·새로고침 시 항상 S1부터 새로 시작한다.
