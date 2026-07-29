@@ -8,6 +8,7 @@ import {
   getBearing,
   getDistanceMeters,
   getStepArrivalRadiusM,
+  gateProgressFromStart,
   GPS_MAX_ACCURACY_M,
   GPS_SOFT_ACCURACY_M,
   MAX_TURN_DEG_PER_SEC,
@@ -16,6 +17,7 @@ import {
   shortestAngleDelta,
   shouldArriveByRemain,
   smoothLatLng,
+  START_ENGAGE_RADIUS_M,
   stepAngleTowards,
   STEP_ARRIVAL_RADIUS_M,
 } from './geo.js';
@@ -240,6 +242,58 @@ describe('getArrowAimPoint (look-ahead)', () => {
     const aim = getArrowAimPoint(pos, steps, 2); // target = 마지막 노드
     expect(aim.lat).toBeCloseTo(steps[2].lat, 9);
     expect(aim.lng).toBeCloseTo(steps[2].lng, 9);
+  });
+});
+
+describe('gateProgressFromStart', () => {
+  const steps = ensureStepDistances([
+    node('n01', 0),
+    node('n02', 20),
+    node('n03', 40),
+    node('n11', 100),
+  ]);
+
+  it('locks progress at 0 when GPS is far from the start node', () => {
+    const pos = { lat: node('p', 100).lat, lng: node('p', 100).lng }; // n11 근처
+    const gated = gateProgressFromStart({
+      pos,
+      steps,
+      rawProgressM: 100,
+      prevProgressM: 0,
+      startEngaged: false,
+    });
+    expect(gated.lockedAtStart).toBe(true);
+    expect(gated.startEngaged).toBe(false);
+    expect(gated.progressM).toBe(0);
+    expect(gated.distToStartM).toBeGreaterThan(START_ENGAGE_RADIUS_M);
+  });
+
+  it('engages once GPS is within START_ENGAGE_RADIUS_M of start', () => {
+    const pos = { lat: node('p', 5).lat, lng: node('p', 5).lng };
+    const gated = gateProgressFromStart({
+      pos,
+      steps,
+      rawProgressM: 5,
+      prevProgressM: 0,
+      startEngaged: false,
+    });
+    expect(gated.lockedAtStart).toBe(false);
+    expect(gated.startEngaged).toBe(true);
+    expect(gated.progressM).toBeCloseTo(5, 5);
+  });
+
+  it('caps a huge forward jump after engage', () => {
+    const pos = { lat: node('p', 10).lat, lng: node('p', 10).lng };
+    const gated = gateProgressFromStart({
+      pos,
+      steps,
+      rawProgressM: 200,
+      prevProgressM: 10,
+      startEngaged: true,
+      maxJumpM: 45,
+    });
+    expect(gated.progressM).toBe(55);
+    expect(gated.lockedAtStart).toBe(false);
   });
 });
 

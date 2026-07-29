@@ -1,0 +1,68 @@
+{
+  "_설명": "오늘 기준 ticketId=56 (제천→원주 KTX, n01→n12, ~117m) 실BE 안내 검증. GPS만 시나리오.",
+  "_경로": "n01→n02→n03→n06→n09→n11→n12",
+  "_시작문구": "3층 입구에서 출발해 18m 직진",
+  "_에스컬레이터문구": "에스컬레이터를 타고 내려가세요",
+  "scenarios": [
+    {
+      "name": "56_1_n01출발_완주",
+      "desc": "n01에서 정상 출발 후 전 구간 완주. 시작 문구·거리(~18m) 확인 후 도착.",
+      "핵심검증": "정상 시작 안내 + 도착",
+      "pathMode": "full",
+      "speedMps": 1.2,
+      "expect": {
+        "reachesEnd": true,
+        "announcesAllTurns": true,
+        "noDuplicateAnnounce": true,
+        "distanceMonotonic": true,
+        "distanceErrorP95M": 35,
+        "voicePlaysOnAnnounce": true,
+        "startInstructionContains": "출발",
+        "startDistanceAroundM": 18
+      }
+    },
+    {
+      "name": "56_2_시작직후_n11점프방지",
+      "desc": "길찾기 시작 직후 GPS가 n11(에스컬레이터)에 잡혀도 출발 안내를 유지. 이후 n01로 이동해 완주.",
+      "핵심검증": "출발 잠금 — 에스컬레이터 문구로 점프하지 않음",
+      "pathMode": "full",
+      "speedMps": 1.2,
+      "preflight": {
+        "gpsAtNode": "n11",
+        "expectInstructionContains": "출발",
+        "expectInstructionNotContains": "에스컬레이터",
+        "expectProgressNearM": 0,
+        "thenGpsAtNode": "n01"
+      },
+      "expect": {
+        "reachesEnd": true,
+        "startLockHolds": true
+      }
+    },
+    {
+      "name": "56_3_옆으로_이탈후_복귀",
+      "desc": "중간까지 정상 → 옆으로 35m 이탈 → 복귀 → 목적지.",
+      "핵심검증": "이탈 감지 / 복귀 후 정상화",
+      "pathMode": "deviate",
+      "deviate": { "bearingDeg": 90, "distanceM": 35, "thenReturn": true },
+      "speedMps": 1.2,
+      "expect": {
+        "offRouteDetected": true,
+        "recoversAfterReturn": true,
+        "reachesEnd": true
+      }
+    },
+    {
+      "name": "56_4_반대방향_후퇴후_재전진",
+      "desc": "중간까지 → 되돌아감 → 다시 전진 → 도착.",
+      "핵심검증": "후퇴 시 거리 증가 / 재진입 재안내",
+      "pathMode": "backtrack",
+      "speedMps": 1.0,
+      "expect": {
+        "distanceIncreasesOnBacktrack": true,
+        "reAnnouncesOnReturn": true,
+        "reachesEnd": true
+      }
+    }
+  ]
+}

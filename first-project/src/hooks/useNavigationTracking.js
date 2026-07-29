@@ -13,6 +13,7 @@ import {
   OFF_ROUTE_CLEAR_COUNT,
   OFF_ROUTE_HIT_COUNT,
   OFF_ROUTE_THRESHOLD_M,
+  gateProgressFromStart,
   OVERSHOOT_THRESHOLD_M,
   resolveStepIndexFromProgress,
   shouldArriveByRemain,
@@ -44,6 +45,9 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
   const lastPanAtRef = useRef(0);
   const lastNavSigRef = useRef('');
   const lastPassRef = useRef(-1);
+  /** 출발 노드 근처에 한 번이라도 들어오면 true — 그 전엔 중간 투영으로 진행도 올리지 않음 */
+  const startEngagedRef = useRef(false);
+  const progressMRef = useRef(0);
   /** 실제 나침반 이벤트를 받기 전엔 heading=0 고정 → 반대방향 오판 방지 */
   const headingReadyRef = useRef(false);
   /** 화살표 표시각 — 실시간 반감기 감쇠 + 초당 회전각 상한 적용 (원시 방위각과 별개) */
@@ -96,7 +100,20 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
       }
 
       // raw GPS 기준 — 거리·통과·음성 모두 즉시 (EMA/maxStep 없음)
-      const progressM = getProgressAlongRouteM(pos, steps);
+      // 단, 출발 노드 근접 전에는 중간 경로 투영으로 진행도를 올리지 않음
+      const rawProgressM = getProgressAlongRouteM(pos, steps);
+      const gated = gateProgressFromStart({
+        pos,
+        steps,
+        rawProgressM,
+        prevProgressM: progressMRef.current,
+        startEngaged: startEngagedRef.current,
+      });
+      startEngagedRef.current = gated.startEngaged;
+      const progressM = gated.progressM;
+      progressMRef.current = progressM;
+      const lockedAtStart = gated.lockedAtStart;
+
       const posJump =
         lastPosRef.current == null
           ? Infinity
@@ -112,16 +129,42 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
         progressM,
         steps,
       );
-      // UI 큰 숫자 = 항상 BE 다음 목표까지 (안내 문구와 동일). 마지막 구간도 평면으로 바꾸지 않음.
-      const distanceM = getRemainingToTargetM(progressM, targetIndex, steps);
+      // 출발 잠금 중: 거리는 출발 노드까지 — 중간 구간(19m 에스컬레이터 등)으로 점프하지 않음
+      const distanceM = lockedAtStart
+        ? gated.distToStartM
+        : getRemainingToTargetM(progressM, targetIndex, steps);
 
       // 통과선/목표 변경 시 즉시 TTS·문구 sync
       const prevTarget = useFlowStore.getState().currentStepIndex;
       const stepChanged =
-        passedIndex !== announcedPassIndex ||
-        passedIndex !== lastPassRef.current ||
-        targetIndex !== prevTarget;
-      if (stepChanged) {
+        !lockedAtStart &&
+        (passedIndex !== announcedPassIndex ||
+          passedIndex !== lastPassRef.current ||
+          targetIndex !== prevTarget);
+      if (lockedAtStart) {
+        if (lastPassRef.current !== 0) {
+          console.log(
+            `[NAV] start-lock distStart=${gated.distToStartM.toFixed(1)}m` +
+              ` (raw s=${rawProgressM.toFixed(1)}m → hold 출발 안내)`,
+          );
+          const start = steps[0];
+          const { screenTextMap } = useFlowStore.getState();
+          const startInstruction =
+            (start?.nodeId && screenTextMap[start.nodeId]) || start?.instruction || '';
+          setNavigation({
+            progressM: 0,
+            announcedPassIndex: 0,
+            currentStepIndex: 0,
+            currentInstruction: startInstruction,
+            destination: start
+              ? { lat: start.lat, lng: start.lng, label: start.name ?? '' }
+              : null,
+            overshoot: false,
+            altRoute: false,
+          });
+          lastPassRef.current = 0;
+        }
+      } else if (stepChanged) {
         console.log(
           `[NAV] s=${progressM.toFixed(1)}m remain=${Math.round(distanceM)}m` +
             ` | pass=${steps[passedIndex]?.nodeId}(#${passedIndex})` +
@@ -143,19 +186,22 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
           : Infinity;
 
       // 도착 = 마지막 구간 remain 기준 (짧은 마지막 구간은 조기 도착 방지)
-      const onFinalStep = targetIndex >= lastIdx || passedIndex >= lastIdx;
+      const onFinalStep =
+        !lockedAtStart && (targetIndex >= lastIdx || passedIndex >= lastIdx);
       const lastCum = Number(lastStep?.cumulativeDistanceM) || 0;
       const prevCum =
         lastIdx > 0 ? Number(steps[lastIdx - 1]?.cumulativeDistanceM) || 0 : 0;
       const lastSegLenM = Math.max(0, lastCum - prevCum);
-      const remainArrived = shouldArriveByRemain({
-        onFinalStep,
-        distanceM,
-        distToLastNode,
-        passedIndex,
-        lastIdx,
-        lastSegLenM,
-      });
+      const remainArrived =
+        !lockedAtStart &&
+        shouldArriveByRemain({
+          onFinalStep,
+          distanceM,
+          distToLastNode,
+          passedIndex,
+          lastIdx,
+          lastSegLenM,
+        });
       const distShown = Math.round(distanceM);
 
       const finishArrival = (reason) => {
@@ -176,7 +222,8 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
         return;
       }
 
-      const dest = steps[targetIndex];
+      // 출발 잠금 중에는 화살표가 출발 노드를 가리킴
+      const dest = lockedAtStart ? steps[0] : steps[targetIndex];
       if (!dest?.lat || !dest?.lng) {
         if (remainArrived) {
           arrivalHitsRef.current += 1;
@@ -189,14 +236,19 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
         return;
       }
 
-      const isLastStep = onFinalStep || distToLastNode <= ARRIVAL_RADIUS_M;
-      const rawDistanceM = isLastStep
-        ? distToLastNode
-        : getDistanceMeters(pos.lat, pos.lng, dest.lat, dest.lng);
+      const isLastStep =
+        !lockedAtStart && (onFinalStep || distToLastNode <= ARRIVAL_RADIUS_M);
+      const rawDistanceM = lockedAtStart
+        ? gated.distToStartM
+        : isLastStep
+          ? distToLastNode
+          : getDistanceMeters(pos.lat, pos.lng, dest.lat, dest.lng);
 
       // 화살표는 목표 노드에 근접하면 다음 노드 쪽으로 미리 방향을 틀어,
       // 노드를 스치는 순간 방위각이 급변하는 걸 완화한다 (거리·도착 판정은 dest 그대로 사용)
-      const aimPoint = isLastStep ? dest : (getArrowAimPoint(pos, steps, targetIndex) ?? dest);
+      const aimPoint = lockedAtStart || isLastStep
+        ? dest
+        : (getArrowAimPoint(pos, steps, targetIndex) ?? dest);
       const bearing = getBearing(pos.lat, pos.lng, aimPoint.lat, aimPoint.lng);
       const rawDestinationAngle = getArrowRotation(bearing, heading);
 
@@ -251,7 +303,12 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
       const isOvershoot = lastNodeOvershoot || (isWrongDirection && canTreatWrongDirAsOvershoot);
 
       let nextAltRoute = prevAltRoute;
-      if (!isOvershoot && !(isLastStep && rawDistanceM <= OVERSHOOT_THRESHOLD_M)) {
+      if (lockedAtStart) {
+        // 출발 전(시작점 미도달)에는 이탈/중간 구간 오판으로 빨간 화면을 띄우지 않음
+        offRouteHitsRef.current = 0;
+        onRouteHitsRef.current = 0;
+        nextAltRoute = false;
+      } else if (!isOvershoot && !(isLastStep && rawDistanceM <= OVERSHOOT_THRESHOLD_M)) {
         const routeDistM = getDistanceToRouteMeters(pos, steps);
         if (routeDistM > OFF_ROUTE_THRESHOLD_M) {
           offRouteHitsRef.current += 1;
@@ -412,6 +469,8 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
     lastPanAtRef.current = 0;
     lastNavSigRef.current = '';
     lastPassRef.current = -1;
+    startEngagedRef.current = false;
+    progressMRef.current = 0;
     headingReadyRef.current = false;
     smoothedAngleRef.current = 0;
     lastAngleTsRef.current = null;

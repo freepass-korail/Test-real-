@@ -317,6 +317,66 @@ export function getNavigationInstruction(distanceM, instruction) {
 export const OVERSHOOT_THRESHOLD_M = 15;
 
 /**
+ * 안내 시작 직후: 출발 노드(steps[0])에 이 거리(m) 안으로 들어오기 전에는
+ * 경로 중간 투영으로 진행도를 올리지 않는다.
+ * (실내 GPS가 승강장/에스컬레이터 쪽에 잡혀 출발 안내가 스킵되는 것 방지)
+ */
+export const START_ENGAGE_RADIUS_M = 30;
+
+/** 출발 잠금 해제 후, 한 GPS 샘플에서 허용하는 최대 진행 점프(m) */
+export const MAX_PROGRESS_JUMP_M = 45;
+
+/**
+ * 출발 노드 근접 전 진행도 잠금 + 과도한 전방 점프 제한.
+ * @returns {{
+ *   progressM: number,
+ *   startEngaged: boolean,
+ *   lockedAtStart: boolean,
+ *   distToStartM: number,
+ * }}
+ */
+export function gateProgressFromStart({
+  pos,
+  steps = [],
+  rawProgressM = 0,
+  prevProgressM = 0,
+  startEngaged = false,
+  startEngageRadiusM = START_ENGAGE_RADIUS_M,
+  maxJumpM = MAX_PROGRESS_JUMP_M,
+}) {
+  const start = steps[0];
+  if (!pos || !start?.lat || !start?.lng) {
+    return {
+      progressM: Math.max(0, Number(rawProgressM) || 0),
+      startEngaged: true,
+      lockedAtStart: false,
+      distToStartM: Infinity,
+    };
+  }
+
+  const distToStartM = getDistanceMeters(pos.lat, pos.lng, start.lat, start.lng);
+  if (!startEngaged && distToStartM > startEngageRadiusM) {
+    return {
+      progressM: 0,
+      startEngaged: false,
+      lockedAtStart: true,
+      distToStartM,
+    };
+  }
+
+  const raw = Math.max(0, Number(rawProgressM) || 0);
+  const prev = Math.max(0, Number(prevProgressM) || 0);
+  // 뒤로 가는 건 허용(되돌아감). 앞으로는 한 틱에 maxJumpM까지만.
+  const progressM = raw > prev + maxJumpM ? prev + maxJumpM : raw;
+  return {
+    progressM,
+    startEngaged: true,
+    lockedAtStart: false,
+    distToStartM,
+  };
+}
+
+/**
  * 목표 대비 이동/시선이 이 각도(°) 이상 어긋나면 반대 방향
  * (destinationAngle = bearing - heading 의 절댓값)
  */
