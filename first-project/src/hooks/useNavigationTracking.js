@@ -18,6 +18,7 @@ import {
   OVERSHOOT_THRESHOLD_M,
   resolveStepIndexFromProgress,
   shouldArriveByRemain,
+  shortestAngleDelta,
   stepAngleTowards,
   WRONG_DIRECTION_ANGLE_DEG,
   WRONG_DIRECTION_AWAY_M,
@@ -481,10 +482,10 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
         lastNodeOvershootRef.current || (isWrongDirection && canTreatWrongDirAsOvershoot);
       const angleShown = Math.round(destinationAngle);
 
-      // 각도 2° 이상 변하거나 overshoot 바뀔 때만 갱신
+      // 1°만 바뀌어도 반영 — 폰 회전에 화살표가 바로 따라오게
       const prevAngle = useFlowStore.getState().destinationAngle ?? 0;
       if (
-        Math.abs(prevAngle - angleShown) >= 2 ||
+        Math.abs(shortestAngleDelta(prevAngle, angleShown)) >= 1 ||
         overshoot !== isOvershoot
       ) {
         setNavigation({

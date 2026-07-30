@@ -8,6 +8,7 @@ import {
   getBearing,
   getDistanceMeters,
   getProgressAlongRouteM,
+  getRemainingToTargetM,
   getStepArrivalRadiusM,
   gateProgressFromStart,
   GPS_MAX_ACCURACY_M,
@@ -375,6 +376,27 @@ describe('getProgressAlongRouteM minSnapCumM', () => {
     };
     const s = getProgressAlongRouteM(near, steps);
     expect(s).toBeGreaterThan(1);
+  });
+});
+
+describe('getRemainingToTargetM', () => {
+  it('uses distanceToNextM of the from-node, not target cumulativeDistanceM', () => {
+    // cum이 어긋나도 남은거리는 distanceToNextM(23.189) 기준
+    const steps = [
+      {
+        ...node('n03', 0),
+        cumulativeDistanceM: 37.3,
+        distanceToNextM: 23.189,
+      },
+      {
+        ...node('n06', 23.189),
+        cumulativeDistanceM: 999, // 잘못/다른 스케일이어도 UI는 distToNext 사용
+        distanceToNextM: 0,
+      },
+    ];
+    expect(getRemainingToTargetM(37.3, 1, steps)).toBeCloseTo(23.189, 3);
+    expect(getRemainingToTargetM(37.3 + 10, 1, steps)).toBeCloseTo(13.189, 3);
+    expect(getRemainingToTargetM(37.3 + 23.189, 1, steps)).toBeCloseTo(0, 5);
   });
 });
 

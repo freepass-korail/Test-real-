@@ -55,22 +55,21 @@ export function smoothAngle(prev, next, alpha = 0.2) {
   return normalizeAngle(prev + delta * alpha);
 }
 
-/** 이 각도(°) 미만 변화는 나침반 노이즈로 보고 무시 */
-export const HEADING_DEADBAND_DEG = 8;
+/** 나침반 데드밴드 — 0이면 필터 없음(폰 회전에 즉시 반응) */
+export const HEADING_DEADBAND_DEG = 0;
 
-/** 화살표가 목표각을 따라가는 속도 (작을수록 덜 튐) */
-export const ARROW_FOLLOW = 0.06;
+/** 화살표가 목표각을 따라가는 속도 (1에 가까울수록 즉시) */
+export const ARROW_FOLLOW = 0.45;
 
 /**
  * 목표 방위각 반감기(ms) — dt(경과 시간) 동안 남은 각도 차이의 몇 %를 좁힐지 결정.
  * requestAnimationFrame 프레임률에 의존하지 않고 실제 경과 시간 기준으로 동작한다.
  * 클수록 목표각을 향해 더 천천히·부드럽게 따라간다.
  */
-export const ARROW_HALF_LIFE_MS = 450;
+export const ARROW_HALF_LIFE_MS = 80;
 
-/** 화살표가 초당 이 각도(°) 이상 회전하지 못하도록 상한 — 실내 자기장 왜곡 등으로
- *  목표각이 순간적으로 크게 튀어도 회전 속도 자체는 일정하게 유지한다. */
-export const MAX_TURN_DEG_PER_SEC = 120;
+/** 화살표가 초당 이 각도(°) 이상 회전하지 못하도록 상한 — 폰을 빨리 돌려도 따라가게 */
+export const MAX_TURN_DEG_PER_SEC = 540;
 
 /**
  * 실시간 경과(dt)를 반영한 반감기 감쇠 + 초당 회전각 상한을 적용해 다음 각도를 계산한다.
@@ -193,8 +192,8 @@ export const GPS_DISTANCE_MAX_STEP_M = 8;
  */
 export const GPS_MOVE_DEADBAND_M = 5;
 
-/** 나침반 EMA 반영 비율 (새 각도 가중치) */
-export const HEADING_SMOOTH_ALPHA = 0.2;
+/** 나침반 EMA 반영 비율 (새 각도 가중치) — 클수록 실시간 반응 */
+export const HEADING_SMOOTH_ALPHA = 0.5;
 
 /** 정지 판정: 가속도 크기(m/s²)가 이하면 정지 후보 */
 export const STATIONARY_ACCEL_M_S2 = 0.85;
@@ -649,21 +648,26 @@ export function getProgressAlongRouteM(pos, steps = [], { minSnapCumM = 0 } = {}
     return Math.max(snapFloor, Number(steps[snapIdx].cumulativeDistanceM) || 0);
   }
 
-  // 2) 폴리라인 투영
+  // 2) 폴리라인 투영 — 구간 길이는 distanceToNextM 우선 (cum 차이 대신)
   const { segmentIndex, t } = getClosestPointOnRoute(pos, steps);
   const startCum = Number(steps[segmentIndex].cumulativeDistanceM) || 0;
+  const distToNextRaw = steps[segmentIndex].distanceToNextM;
+  const distToNext =
+    distToNextRaw != null && !Number.isNaN(Number(distToNextRaw))
+      ? Math.max(0, Number(distToNextRaw))
+      : null;
   const endCum =
     Number(steps[segmentIndex + 1]?.cumulativeDistanceM) ||
     startCum +
-      (steps[segmentIndex].distanceToNextM != null
-        ? Number(steps[segmentIndex].distanceToNextM)
+      (distToNext != null
+        ? distToNext
         : getDistanceMeters(
             steps[segmentIndex].lat,
             steps[segmentIndex].lng,
             steps[segmentIndex + 1].lat,
             steps[segmentIndex + 1].lng,
           ));
-  const toNext = Math.max(0, endCum - startCum);
+  const toNext = distToNext != null ? distToNext : Math.max(0, endCum - startCum);
   const clampedT = Math.max(0, Math.min(1, t));
   const projected = Math.max(0, startCum + clampedT * toNext);
   const remainToEnd = Math.max(0, lastCum - projected);
@@ -744,17 +748,29 @@ export function getRemainingDistanceM(progressM, steps = [], totalDistanceM = nu
 }
 
 /**
- * UI용: 현재 목표 노드까지 남은 거리(m) = targetCum − s
- * BE directions.text의 "18m 직진" / "321m 이동"과 같은 단위(구간 거리).
+ * UI용: 현재 목표 노드까지 남은 거리(m).
+ * 구간 길이는 출발 노드(guide)의 distanceToNextM을 쓴다.
+ * (cumulativeDistanceM 차이로 구하지 않음 — BE screenText의 "23m 직진"과 동일 필드)
  */
 export function getRemainingToTargetM(progressM, targetIndex, steps = []) {
   if (!steps.length) return 0;
   ensureStepDistances(steps);
   const lastIdx = steps.length - 1;
-  const idx = Math.max(0, Math.min(lastIdx, Number(targetIndex) || 0));
-  const targetCum = Number(steps[idx]?.cumulativeDistanceM) || 0;
+  const targetIdx = Math.max(0, Math.min(lastIdx, Number(targetIndex) || 0));
   const s = Math.max(0, Number(progressM) || 0);
-  return Math.max(0, targetCum - s);
+
+  if (targetIdx <= 0) return 0;
+
+  const from = steps[targetIdx - 1];
+  const fromCum = Number(from?.cumulativeDistanceM) || 0;
+  const toCum = Number(steps[targetIdx]?.cumulativeDistanceM) || 0;
+  const segLen =
+    from?.distanceToNextM != null && !Number.isNaN(Number(from.distanceToNextM))
+      ? Math.max(0, Number(from.distanceToNextM))
+      : Math.max(0, toCum - fromCum);
+
+  const traveledOnSeg = Math.max(0, s - fromCum);
+  return Math.max(0, segLen - traveledOnSeg);
 }
 
 /**

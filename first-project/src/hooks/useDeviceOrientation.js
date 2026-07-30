@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  HEADING_DEADBAND_DEG,
   HEADING_SMOOTH_ALPHA,
   normalizeAngle,
-  shortestAngleDelta,
   smoothAngle,
 } from '../utils/geo';
 import useStationary from './useStationary';
@@ -22,6 +20,52 @@ function getScreenOrientationDeg() {
 }
 
 /**
+ * alpha(요) + beta(앞뒤 기울기) + gamma(좌우 기울기)로
+ * "화면 위쪽이 가리키는 나침반 방위"를 계산 (tilt compensation).
+ * 폰을 세우거나 기울여도 앞방향 방위가 유지되게 함.
+ * @returns {number} 0~360 (북=0, 시계방향)
+ */
+export function compassHeadingFromEuler(alpha, beta, gamma) {
+  const a = Number(alpha);
+  const b = Number(beta);
+  const g = Number(gamma);
+  if (Number.isNaN(a)) return null;
+
+  // beta/gamma 없거나 거의 수평 → alpha만 (360−α)
+  if (
+    Number.isNaN(b) ||
+    Number.isNaN(g) ||
+    (Math.abs(b) < 5 && Math.abs(g) < 5)
+  ) {
+    return ((360 - a) % 360 + 360) % 360;
+  }
+
+  const toRad = Math.PI / 180;
+  const x = b * toRad; // beta: 앞뒤 (pitch)
+  const y = g * toRad; // gamma: 좌우 (roll)
+  const z = a * toRad; // alpha: 요 (yaw)
+
+  const cX = Math.cos(x);
+  const cY = Math.cos(y);
+  const cZ = Math.cos(z);
+  const sX = Math.sin(x);
+  const sY = Math.sin(y);
+  const sZ = Math.sin(z);
+
+  // 기기 좌표계 → 지평 나침반 성분 (화면 위쪽 방향)
+  const vx = -cZ * sY - sZ * sX * cY;
+  const vy = -sZ * sY + cZ * sX * cY;
+
+  if (Math.abs(vx) < 1e-8 && Math.abs(vy) < 1e-8) {
+    return ((360 - a) % 360 + 360) % 360;
+  }
+
+  let heading = Math.atan2(vx, vy) * (180 / Math.PI);
+  if (heading < 0) heading += 360;
+  return heading;
+}
+
+/**
  * 기기 나침반 heading (°) — 화면 위쪽 기준, 북=0 시계방향.
  *
  * @returns {{ heading: number, source: 'webkit'|'absolute'|'relative'|'alpha' } | null}
@@ -32,34 +76,31 @@ export function getDeviceHeading(event) {
   let compass;
   let source;
 
-  // iOS: 기기 위쪽이 가리키는 방위 (북=0, 시계방향)
+  // iOS: webkitCompassHeading은 이미 기울기 보정된 화면 위쪽 방위
   if (event.webkitCompassHeading != null && !Number.isNaN(event.webkitCompassHeading)) {
     compass = Number(event.webkitCompassHeading);
     source = 'webkit';
   } else if (event.alpha == null || Number.isNaN(event.alpha)) {
     return null;
   } else {
-    // deviceorientationabsolute 는 absolute 플래그가 빠지는 기기가 있음 → type 신뢰
     const isAbsoluteEvent =
       event.type === 'deviceorientationabsolute' || event.absolute === true;
 
+    // Android 등: alpha만 쓰면 폰을 세울 때 앞뒤/좌우 기울기가 반영 안 됨
+    // → beta(앞뒤)·gamma(좌우)로 tilt compensation
+    const tilted = compassHeadingFromEuler(event.alpha, event.beta, event.gamma);
+    if (tilted == null) return null;
+    compass = tilted;
+
     if (isAbsoluteEvent) {
-      // W3C absolute: alpha는 반시계 → 나침반(시계)로 변환
-      compass = 360 - Number(event.alpha);
       source = 'absolute';
     } else if (event.absolute === false) {
-      // 상대 방위(임의 0점). 절대 이벤트가 없는 Android에서 이걸 버리면
-      // heading이 영원히 0 → 화살표가 방향을 못 잡는 것처럼 보임.
-      compass = 360 - Number(event.alpha);
       source = 'relative';
     } else {
-      // absolute 미표기 — 다수 Android가 absolute처럼 alpha를 줌
-      compass = 360 - Number(event.alpha);
       source = 'alpha';
     }
   }
 
-  // 화면 위쪽 = 사용자가 보는 “앞”이 되도록 보정
   return {
     heading: normalizeAngle(compass - getScreenOrientationDeg()),
     source,
@@ -98,10 +139,8 @@ function useDeviceOrientation() {
   const smoothHeadingRef = useRef(null);
   const publishedHeadingRef = useRef(null);
   const hasPreferredSourceRef = useRef(false);
-  const isStationaryRef = useRef(false);
 
   const { isStationary, start: startStationary, stop: stopStationary } = useStationary();
-  isStationaryRef.current = isStationary;
 
   const stopListening = useCallback(() => {
     if (handlerRef.current) {
@@ -125,7 +164,6 @@ function useDeviceOrientation() {
         const parsed = getDeviceHeading(event);
         if (parsed == null) return;
 
-        // 절대 방위를 한 번이라도 받으면, 이후 상대 이벤트는 무시 (덮어쓰기 방지)
         if (parsed.source === 'relative' && hasPreferredSourceRef.current) {
           return;
         }
@@ -140,20 +178,6 @@ function useDeviceOrientation() {
           HEADING_SMOOTH_ALPHA,
         );
         smoothHeadingRef.current = smoothed;
-
-        // 정지 시 큰 deadband만 — 예전처럼 첫 샘플에 고정하면 역내 자기장 오차가 고착됨
-        const deadband = isStationaryRef.current
-          ? HEADING_DEADBAND_DEG * 2.5
-          : HEADING_DEADBAND_DEG;
-
-        const published = publishedHeadingRef.current;
-        if (
-          published != null &&
-          Math.abs(shortestAngleDelta(published, smoothed)) < deadband
-        ) {
-          return;
-        }
-
         publishedHeadingRef.current = smoothed;
         setHeading(smoothed);
         onUpdate?.(smoothed);
@@ -164,7 +188,6 @@ function useDeviceOrientation() {
         typeof window !== 'undefined' && 'ondeviceorientationabsolute' in window;
       if (absSupported) {
         window.addEventListener('deviceorientationabsolute', handler, true);
-        // 일부 기기는 absolute만으로는 이벤트가 안 와서 병행
         window.addEventListener('deviceorientation', handler, true);
       } else {
         window.addEventListener('deviceorientation', handler, true);

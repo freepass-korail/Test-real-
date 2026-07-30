@@ -326,7 +326,7 @@ function S5_Navigation() {
           height: compass.dotSize,
           borderRadius: s5.headingDot.radius,
           background: s5.headingDot.background,
-          transition: 'left 0.18s ease-out, top 0.18s ease-out',
+          transition: 'left 0.06s linear, top 0.06s linear',
           opacity: compassOpacity,
           pointerEvents: 'none',
         }}

@@ -1,9 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ARROW_FOLLOW, normalizeAngle, shortestAngleDelta } from '../utils/geo';
 
-/** 목적지 각도에 화살표가 부드럽게 따라가도록 보간 */
+/**
+ * 목적지 각도에 화살표가 따라가도록 보간.
+ * follow가 클수록 네이버지도처럼 즉시 반응.
+ */
 export default function useFollowAngle(target = 0, { follow = ARROW_FOLLOW } = {}) {
   const [angle, setAngle] = useState(target);
+  const angleRef = useRef(target);
+  const targetRef = useRef(target);
+  targetRef.current = target;
 
   useEffect(() => {
     let raf;
@@ -11,14 +17,20 @@ export default function useFollowAngle(target = 0, { follow = ARROW_FOLLOW } = {
 
     const tick = () => {
       if (!active) return;
+      const goal = targetRef.current;
+      const prev = angleRef.current;
+      const delta = shortestAngleDelta(prev, goal);
 
-      setAngle((prev) => {
-        const delta = shortestAngleDelta(prev, target);
-        // 목표에 거의 도달하면 스냅하고 루프 종료
-        if (Math.abs(delta) < 0.8) return target;
+      let next;
+      if (Math.abs(delta) < 0.4) {
+        next = goal;
+      } else {
+        next = normalizeAngle(prev + delta * follow);
         raf = requestAnimationFrame(tick);
-        return normalizeAngle(prev + delta * follow);
-      });
+      }
+
+      angleRef.current = next;
+      setAngle(next);
     };
 
     raf = requestAnimationFrame(tick);
