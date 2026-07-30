@@ -214,7 +214,7 @@ for (const name of SCENARIO_NAMES) {
     // 시작 잠금 시나리오: 처음부터 출발점 밖에서 GPS를 잡아 engage가 먼저 풀리지 않게 함
     const initialGeo = rawScenario.preflight
       ? { lat: 37.1205, lng: 128.2015 } // 제천역에서 충분히 먼 좌표
-      : { lat: 37.1279929, lng: 128.2056833 }; // n01 근처
+      : { lat: 37.1280816, lng: 128.2056662 }; // n02(갈림길) — BE steps 출발 기준
     const { logs } = await installMocks(page, initialGeo);
 
     await goToS5(page);

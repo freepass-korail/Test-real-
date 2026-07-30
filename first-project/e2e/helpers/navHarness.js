@@ -65,8 +65,8 @@ export async function installMocks(page, { lat, lng } = {}) {
   await page.addInitScript(
     ({ lat0, lng0 }) => {
       let cur = {
-        lat: lat0 ?? 37.1279929,
-        lng: lng0 ?? 128.2056833,
+        lat: lat0 ?? 37.1280816,
+        lng: lng0 ?? 128.2056662,
         accuracy: 5,
         ts: Date.now(),
       };

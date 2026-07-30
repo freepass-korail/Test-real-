@@ -10,8 +10,8 @@ import { clearSession } from '../utils/session';
 import { resolveStepIndexFromProgress } from '../utils/geo';
 
 /**
- * BE guide/steps가 출발 노드(n01 등)를 빼먹는 경우 —
- * route directions 문구로 화면/음성을 채운다.
+ * BE guide/steps가 route 첫 노드(출발)를 빼먹는 경우 —
+ * route directions 문구로 화면/음성을 채운다. (현재 BE는 steps가 n02부터)
  */
 function fillMissingStartGuide(audioMap, screenTextMap, routeSteps) {
   if (!routeSteps?.length) return { audioMap, screenTextMap, startId: null, startText: null };
