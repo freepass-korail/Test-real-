@@ -30,6 +30,11 @@ import { GUIDE_STATE } from '../utils/guideStates';
 const PAN_THROTTLE_MS = 2000;
 /** 이 속도(m/s) 이상이면 GPS course를 화살표 heading으로 우선 */
 const GPS_COURSE_MIN_SPEED_MPS = 0.6;
+/**
+ * 나침반이 아직 없을 때, 이 거리(m) 이상 GPS가 움직이면
+ * 이동 방위를 heading으로 씀 (역내 자기장/상대 센서 실패 대비)
+ */
+const MOVE_COURSE_MIN_M = 3;
 /** 최종 노드 근처에서만 반대방향을 '지나침'으로 해석 */
 const WRONG_DIR_OVERSHOOT_NEAR_M = 30;
 
@@ -51,6 +56,10 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
   const progressMRef = useRef(0);
   /** 실제 나침반 이벤트를 받기 전엔 heading=0 고정 → 반대방향 오판 방지 */
   const headingReadyRef = useRef(false);
+  /** deviceorientation으로 나침반을 받은 적 있는지 (없으면 GPS 이동 방위 폴백) */
+  const compassHeardRef = useRef(false);
+  /** 나침반 미수신 시 GPS 이동으로 추정한 heading */
+  const moveHeadingRef = useRef(null);
   /** 화살표 표시각 — 실시간 반감기 감쇠 + 초당 회전각 상한 적용 (원시 방위각과 별개) */
   const smoothedAngleRef = useRef(0);
   const lastAngleTsRef = useRef(null);
@@ -93,11 +102,33 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
         !Number.isNaN(Number(gpsHeading)) &&
         gpsSpeed != null &&
         Number(gpsSpeed) >= GPS_COURSE_MIN_SPEED_MPS;
-      const heading = useGpsCourse
-        ? normalizeAngle(Number(gpsHeading))
-        : compassHeading;
+
+      let heading = compassHeading;
       if (useGpsCourse) {
+        heading = normalizeAngle(Number(gpsHeading));
         headingReadyRef.current = true;
+      } else if (!compassHeardRef.current) {
+        // 나침반 미수신: GPS 이동 방위로 화살표라도 돌림 (역내·상대센서-only 대비)
+        if (lastPosRef.current && pos) {
+          const moved = getDistanceMeters(
+            lastPosRef.current.lat,
+            lastPosRef.current.lng,
+            pos.lat,
+            pos.lng,
+          );
+          if (moved >= MOVE_COURSE_MIN_M) {
+            moveHeadingRef.current = getBearing(
+              lastPosRef.current.lat,
+              lastPosRef.current.lng,
+              pos.lat,
+              pos.lng,
+            );
+            headingReadyRef.current = true;
+          }
+        }
+        if (moveHeadingRef.current != null) {
+          heading = moveHeadingRef.current;
+        }
       }
 
       // raw GPS 기준 — 거리·통과·음성 모두 즉시 (EMA/maxStep 없음)
@@ -399,7 +430,9 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
 
   const handleHeadingUpdate = useCallback(
     (heading) => {
+      compassHeardRef.current = true;
       headingReadyRef.current = true;
+      moveHeadingRef.current = null;
       const {
         position,
         bearing: storedBearing,
@@ -485,6 +518,8 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
     startEngagedRef.current = false;
     progressMRef.current = 0;
     headingReadyRef.current = false;
+    compassHeardRef.current = false;
+    moveHeadingRef.current = null;
     smoothedAngleRef.current = 0;
     lastAngleTsRef.current = null;
     const steps = useFlowStore.getState().routeSteps || [];

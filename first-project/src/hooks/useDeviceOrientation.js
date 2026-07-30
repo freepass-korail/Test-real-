@@ -23,33 +23,52 @@ function getScreenOrientationDeg() {
 
 /**
  * 기기 나침반 heading (°) — 화면 위쪽 기준, 북=0 시계방향.
- * 실측에서 반대 방향이 나오던 주요 원인:
- * - 화면 orientation 미보정
- * - absolute=false 상대 alpha를 절대 방위로 오인
+ *
+ * @returns {{ heading: number, source: 'webkit'|'absolute'|'relative'|'alpha' } | null}
  */
 export function getDeviceHeading(event) {
   if (!event) return null;
 
   let compass;
+  let source;
 
   // iOS: 기기 위쪽이 가리키는 방위 (북=0, 시계방향)
   if (event.webkitCompassHeading != null && !Number.isNaN(event.webkitCompassHeading)) {
     compass = Number(event.webkitCompassHeading);
+    source = 'webkit';
   } else if (event.alpha == null || Number.isNaN(event.alpha)) {
     return null;
-  } else if (event.absolute === true) {
-    // W3C absolute: alpha는 반시계 → 나침반(시계)로 변환
-    compass = 360 - Number(event.alpha);
-  } else if (event.absolute === false) {
-    // 상대 방위는 진북 기준이 아님 → 화살표용으로 쓰지 않음 (GPS course에 맡김)
-    return null;
   } else {
-    // absolute 미표기 — 다수 Android가 absolute처럼 alpha를 줌
-    compass = 360 - Number(event.alpha);
+    // deviceorientationabsolute 는 absolute 플래그가 빠지는 기기가 있음 → type 신뢰
+    const isAbsoluteEvent =
+      event.type === 'deviceorientationabsolute' || event.absolute === true;
+
+    if (isAbsoluteEvent) {
+      // W3C absolute: alpha는 반시계 → 나침반(시계)로 변환
+      compass = 360 - Number(event.alpha);
+      source = 'absolute';
+    } else if (event.absolute === false) {
+      // 상대 방위(임의 0점). 절대 이벤트가 없는 Android에서 이걸 버리면
+      // heading이 영원히 0 → 화살표가 방향을 못 잡는 것처럼 보임.
+      compass = 360 - Number(event.alpha);
+      source = 'relative';
+    } else {
+      // absolute 미표기 — 다수 Android가 absolute처럼 alpha를 줌
+      compass = 360 - Number(event.alpha);
+      source = 'alpha';
+    }
   }
 
   // 화면 위쪽 = 사용자가 보는 “앞”이 되도록 보정
-  return normalizeAngle(compass - getScreenOrientationDeg());
+  return {
+    heading: normalizeAngle(compass - getScreenOrientationDeg()),
+    source,
+  };
+}
+
+/** 절대/웹킷 소스가 상대보다 우선 */
+function isPreferredHeadingSource(source) {
+  return source === 'webkit' || source === 'absolute';
 }
 
 /** iOS 13+ — DeviceOrientationEvent.requestPermission 필요 여부 */
@@ -78,6 +97,7 @@ function useDeviceOrientation() {
   const handlerRef = useRef(null);
   const smoothHeadingRef = useRef(null);
   const publishedHeadingRef = useRef(null);
+  const hasPreferredSourceRef = useRef(false);
   const isStationaryRef = useRef(false);
 
   const { isStationary, start: startStationary, stop: stopStationary } = useStationary();
@@ -92,6 +112,7 @@ function useDeviceOrientation() {
     stopStationary();
     smoothHeadingRef.current = null;
     publishedHeadingRef.current = null;
+    hasPreferredSourceRef.current = false;
     setIsListening(false);
   }, [stopStationary]);
 
@@ -101,9 +122,18 @@ function useDeviceOrientation() {
       startStationary();
 
       const handler = (event) => {
-        const raw = getDeviceHeading(event);
-        if (raw == null) return;
+        const parsed = getDeviceHeading(event);
+        if (parsed == null) return;
 
+        // 절대 방위를 한 번이라도 받으면, 이후 상대 이벤트는 무시 (덮어쓰기 방지)
+        if (parsed.source === 'relative' && hasPreferredSourceRef.current) {
+          return;
+        }
+        if (isPreferredHeadingSource(parsed.source)) {
+          hasPreferredSourceRef.current = true;
+        }
+
+        const raw = parsed.heading;
         const smoothed = smoothAngle(
           smoothHeadingRef.current,
           raw,

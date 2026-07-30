@@ -579,11 +579,12 @@ export function ensureStepDistances(steps = []) {
 export const ROUTE_NODE_SNAP_M = 3;
 
 /**
- * 초반 노드(n01·n02)는 실내 GPS 오차(10~25m)를 고려해 스냅을 넓힘.
- * 기본 3m면 거의 안 잡혀서 통과 안내가 스킵됨.
- * (너무 크면 n02 통과 후 n01로 재스냅 → 안내 되감기. minSnapCumM으로 보완)
+ * 초반 노드(n01·n02) 스냅 상한(m).
+ * 실제 반경은 인접 노드 간격에 비례해 더 줄어듦 —
+ * n01↔n02 평면 ~10m인데 스냅이 2.5m+면 구간 20%만 걸어도 n01에 재스냅되어
+ * progress=0 고정 → 초반 안내가 안 나가는 것처럼 보임.
  */
-export const EARLY_NODE_SNAP_M = 6;
+export const EARLY_NODE_SNAP_M = 2;
 
 /**
  * 최종 목적지(마지막 노드) 평면 근접 시 s를 끝까지 스냅.
@@ -595,8 +596,18 @@ export const ROUTE_FINAL_NODE_SNAP_M = 8;
 /** 세그먼트 끝점(t≈0/1)이면 노드 cum으로 스냅 */
 export const ROUTE_SEGMENT_END_SNAP_T = 0.12;
 
-function nodeSnapRadiusM(index) {
-  return index < EARLY_NODE_COUNT ? EARLY_NODE_SNAP_M : ROUTE_NODE_SNAP_M;
+/** 초반 구간은 끝점 스냅을 더 작게 — 출발 직후에도 progress가 바로 증가하게 */
+export const EARLY_SEGMENT_END_SNAP_T = 0.05;
+
+function nodeSnapRadiusM(index, steps = []) {
+  if (index >= EARLY_NODE_COUNT) return ROUTE_NODE_SNAP_M;
+  const cur = steps[index];
+  const next = steps[index + 1];
+  if (!cur?.lat || !next?.lat) return Math.min(EARLY_NODE_SNAP_M, ROUTE_NODE_SNAP_M);
+  const spacing = getDistanceMeters(cur.lat, cur.lng, next.lat, next.lng);
+  if (!(spacing > 0)) return Math.min(EARLY_NODE_SNAP_M, ROUTE_NODE_SNAP_M);
+  // 간격의 ~12%, 최소 1m ~ EARLY 상한 (n01↔n02 ~10m → ≈1.2m)
+  return Math.min(EARLY_NODE_SNAP_M, Math.max(1, spacing * 0.12));
 }
 
 /**
@@ -619,14 +630,14 @@ export function getProgressAlongRouteM(pos, steps = [], { minSnapCumM = 0 } = {}
   }
 
   // 1) 가까운 중간 노드면 그 노드 cum (최종 노드 제외 — 아래에서 도착권일 때만 스냅)
-  //    초반 노드는 EARLY_NODE_SNAP_M으로 더 넓게 받음
+  //    초반 노드는 간격 비례 스냅 (촘촘하면 더 작게)
   //    이미 지나온 cum보다 뒤 노드로는 스냅 금지
   let snapIdx = -1;
   let snapDist = Infinity;
   for (let i = 0; i < lastIdx; i += 1) {
     const cum = Math.max(0, Number(steps[i].cumulativeDistanceM) || 0);
     if (cum + 1e-6 < snapFloor) continue;
-    const radius = nodeSnapRadiusM(i);
+    const radius = nodeSnapRadiusM(i, steps);
     const d = getDistanceMeters(pos.lat, pos.lng, steps[i].lat, steps[i].lng);
     if (d > radius + 1e-6) continue;
     if (d < snapDist - 1e-6 || (Math.abs(d - snapDist) <= 1e-6 && i > snapIdx)) {
@@ -670,10 +681,13 @@ export function getProgressAlongRouteM(pos, steps = [], { minSnapCumM = 0 } = {}
     return finish(lastCum);
   }
 
-  if (clampedT <= ROUTE_SEGMENT_END_SNAP_T) return finish(startCum);
+  const endSnapT =
+    segmentIndex < EARLY_NODE_COUNT ? EARLY_SEGMENT_END_SNAP_T : ROUTE_SEGMENT_END_SNAP_T;
+
+  if (clampedT <= endSnapT) return finish(startCum);
 
   // 마지막 구간 끝 스냅도 remain이 도착권일 때만 (40→0 점프 방지)
-  if (clampedT >= 1 - ROUTE_SEGMENT_END_SNAP_T) {
+  if (clampedT >= 1 - endSnapT) {
     const remainOnSeg = (1 - clampedT) * toNext;
     const onLastSeg = segmentIndex >= lastIdx - 1;
     if (onLastSeg && remainOnSeg > ARRIVAL_RADIUS_M) {
