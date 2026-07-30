@@ -1,12 +1,12 @@
 {
-  "_설명": "오늘 기준 ticketId=56 (제천→원주 KTX, n01→n12, ~117m) 실BE 안내 검증. GPS만 시나리오.",
-  "_경로": "n01→n02→n03→n06→n09→n11→n12",
-  "_시작문구": "3층 입구에서 출발해 18m 직진",
+  "_설명": "오늘 기준 ticketId=56 (제천→원주 KTX, n01→n13, ~151m) 실BE 안내 검증. GPS만 시나리오.",
+  "_경로": "n01→n02→n03→n06→n09→n10→n13",
+  "_시작문구": "3층 입구에서 출발해 9m 직진",
   "_에스컬레이터문구": "에스컬레이터를 타고 내려가세요",
   "scenarios": [
     {
       "name": "56_1_n01출발_완주",
-      "desc": "n01에서 정상 출발 후 전 구간 완주. 시작 문구·거리(~18m) 확인 후 도착.",
+      "desc": "n01에서 정상 출발 후 전 구간 완주. 시작 문구·거리(~9m) 확인 후 도착.",
       "핵심검증": "정상 시작 안내 + 도착",
       "pathMode": "full",
       "speedMps": 1.2,
@@ -18,21 +18,21 @@
         "distanceErrorP95M": 35,
         "voicePlaysOnAnnounce": true,
         "startInstructionContains": "출발",
-        "startDistanceAroundM": 18
+        "startDistanceAroundM": 9
       }
     },
     {
-      "name": "56_2_시작직후_n11점프방지",
-      "desc": "길찾기 시작 직후 GPS가 n11(에스컬레이터)에 잡혀도 출발 안내를 유지. 이후 n01로 이동해 완주.",
-      "핵심검증": "출발 잠금 — 에스컬레이터 문구로 점프하지 않음",
+      "name": "56_2_시작직후_n10점프방지",
+      "desc": "n01 진입 후 GPS가 n10(에스컬레이터)으로 튀어도 초반 점프 제한으로 에스컬레이터 문구로 건너뛰지 않음.",
+      "핵심검증": "초반 점프 캡 — 에스컬레이터 문구로 점프하지 않음",
       "pathMode": "full",
       "speedMps": 1.2,
       "preflight": {
-        "gpsAtNode": "n11",
+        "gpsAtNode": "n01",
         "expectInstructionContains": "출발",
-        "expectInstructionNotContains": "에스컬레이터",
-        "expectProgressNearM": 0,
-        "thenGpsAtNode": "n01"
+        "thenGpsAtNode": "n10",
+        "thenExpectInstructionNotContains": "에스컬레이터",
+        "thenExpectProgressMaxM": 9
       },
       "expect": {
         "reachesEnd": true,

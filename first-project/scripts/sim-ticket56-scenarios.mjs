@@ -156,14 +156,24 @@ const steps = ensureStepDistances(
   }),
 );
 
+// BE guide/steps가 n01을 빼도 directions 문구로 채움
+for (const s of steps) {
+  if (s.nodeId && !screenTextMap[s.nodeId] && s.instruction) {
+    screenTextMap[s.nodeId] = s.instruction;
+  }
+}
+
 const byId = Object.fromEntries(steps.map((s) => [s.nodeId, s]));
 const results = [];
 
 console.log(`=== ticket ${TICKET_ID} scenario simulation ===`);
 console.log(`path: ${steps.map((s) => s.nodeId).join('→')} (~${Math.round(guide.totalDistanceM)}m)`);
-console.log(`start: ${screenTextMap[steps[0].nodeId]}`);
-console.log(`n11: ${screenTextMap.n11}`);
+console.log(`start: ${screenTextMap[steps[0].nodeId] || steps[0].instruction}`);
+const escNode = steps.find((s) => /에스컬레이터/.test(String(screenTextMap[s.nodeId] || s.instruction || '')));
+console.log(`escalator: ${escNode?.nodeId} ${screenTextMap[escNode?.nodeId] || escNode?.instruction || ''}`);
 console.log(`START_ENGAGE_RADIUS_M=${START_ENGAGE_RADIUS_M}`);
+
+const startNextM = Number(steps[0]?.distanceToNextM) || 9;
 
 // 56_1 n01 출발 완주
 {
@@ -172,7 +182,7 @@ console.log(`START_ENGAGE_RADIUS_M=${START_ENGAGE_RADIUS_M}`);
   const start = nav.tick(byId.n01);
   const startOk =
     String(start.instruction).includes('출발') &&
-    Math.abs(start.remainM - 18) <= 8 &&
+    Math.abs(start.remainM - startNextM) <= 8 &&
     !start.lockedAtStart;
   const snaps = walkPath(nav, steps, name);
   const arrived = snaps.some((s) => s.arrived) || snaps.at(-1)?.progressM >= (steps.at(-1).cumulativeDistanceM - 1);
@@ -182,30 +192,28 @@ console.log(`START_ENGAGE_RADIUS_M=${START_ENGAGE_RADIUS_M}`);
   console.log(`${pass ? 'PASS' : 'FAIL'} ${name}`, results.at(-1).detail);
 }
 
-// 56_2 시작직후 n11 점프 방지
+// 56_2 시작 후 에스컬레이터 노드 점프 방지 (초반 점프 캡)
 {
-  const name = '56_2_시작직후_n11점프방지';
+  const name = '56_2_시작직후_n10점프방지';
+  const jumpId = escNode?.nodeId || 'n10';
   const nav = makeNav(steps, screenTextMap);
-  const atN11 = nav.tick(byId.n11);
+  // 먼저 n01에서 진입한 뒤, 에스컬레이터 GPS로 튀어도 초반 캡으로 문구 점프 방지
+  nav.tick(byId.n01);
+  const atEsc = nav.tick(byId[jumpId] || steps.find((s) => s.nodeId === jumpId));
   const lockOk =
-    atN11.lockedAtStart &&
-    String(atN11.instruction).includes('출발') &&
-    !String(atN11.instruction).includes('에스컬레이터') &&
-    atN11.progressM <= 5;
-  const atN01 = nav.tick(byId.n01);
-  const unlockOk = atN01.startEngaged && !atN01.lockedAtStart && String(atN01.instruction).includes('출발');
+    String(atEsc.instruction).includes('출발') &&
+    !String(atEsc.instruction).includes('에스컬레이터') &&
+    atEsc.progressM <= startNextM + 1;
   const snaps = walkPath(nav, steps, name);
   const arrived = snaps.some((s) => s.arrived) || snaps.at(-1)?.progressM >= (steps.at(-1).cumulativeDistanceM - 1);
-  const pass = lockOk && unlockOk && arrived;
+  const pass = lockOk && arrived;
   results.push({
     name,
     pass,
     detail: {
       lockOk,
-      n11Instr: atN11.instruction,
-      n11Remain: Math.round(atN11.remainM),
-      unlockOk,
-      n01Instr: atN01.instruction,
+      escInstr: atEsc.instruction,
+      escProgress: Math.round(atEsc.progressM),
       arrived,
     },
   });

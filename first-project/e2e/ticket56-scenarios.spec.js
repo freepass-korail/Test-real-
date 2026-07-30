@@ -118,14 +118,52 @@ async function runStartLockPreflight(page, scenario, liveGuide) {
   }
 
   if (pre.thenGpsAtNode) {
-    await e2eLog(page, `[E2E] preflight unlock GPS → ${pre.thenGpsAtNode}`);
+    await e2eLog(page, `[E2E] preflight jump GPS → ${pre.thenGpsAtNode}`);
     await setGpsAtNode(page, liveGuide.route, pre.thenGpsAtNode);
     await page.waitForTimeout(900);
     const after = await readNavSnap(page);
     await e2eLog(
       page,
-      `[E2E] after unlock remain=${after?.remainM} progress=${after?.progressM} instr="${after?.instruction}"`,
+      `[E2E] after jump remain=${after?.remainM} progress=${after?.progressM} instr="${after?.instruction}"`,
     );
+
+    const afterInstr = String(after?.instruction || '');
+    if (pre.thenExpectInstructionNotContains) {
+      const pass = !afterInstr.includes(pre.thenExpectInstructionNotContains);
+      checks.push({
+        name: 'earlyJumpNoEscalator',
+        pass,
+        actual: afterInstr,
+        limit: `notContains:${pre.thenExpectInstructionNotContains}`,
+      });
+      expect(
+        pass,
+        `after jump instruction must NOT contain "${pre.thenExpectInstructionNotContains}", got "${afterInstr}"`,
+      ).toBe(true);
+    }
+    if (pre.thenExpectInstructionContains) {
+      const pass = afterInstr.includes(pre.thenExpectInstructionContains);
+      checks.push({
+        name: 'earlyJumpInstruction',
+        pass,
+        actual: afterInstr,
+        limit: `contains:${pre.thenExpectInstructionContains}`,
+      });
+      expect(pass, `after jump expected "${pre.thenExpectInstructionContains}", got "${afterInstr}"`).toBe(true);
+    }
+    if (pre.thenExpectProgressMaxM != null) {
+      const pass = Number(after?.progressM ?? 999) <= Number(pre.thenExpectProgressMaxM) + 1;
+      checks.push({
+        name: 'earlyJumpProgressCap',
+        pass,
+        actual: after?.progressM,
+        limit: pre.thenExpectProgressMaxM,
+      });
+      expect(
+        pass,
+        `progress should stay ≤${pre.thenExpectProgressMaxM}m after early jump, got ${after?.progressM}`,
+      ).toBe(true);
+    }
   }
 
   return {

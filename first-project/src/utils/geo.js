@@ -326,9 +326,9 @@ export const MAX_PROGRESS_JUMP_M = 45;
 
 /**
  * 초반 노드(n01·n02) 구간에서는 점프를 더 작게 — 한 틱에 두 노드를 건너뛰지 않게.
- * (실내 GPS가 n03 쪽으로 튀면 18+19 < 45 로 n01·n02가 스킵되던 문제)
+ * n01→n02가 ~9m로 짧아져, 12m면 한 틱에 n02까지 통과해 출발 안내가 스킵될 수 있음 → 6m.
  */
-export const EARLY_PROGRESS_JUMP_M = 12;
+export const EARLY_PROGRESS_JUMP_M = 6;
 
 /** 순서 통과를 강제할 초반 노드 개수 (index 0..count-1) */
 export const EARLY_NODE_COUNT = 2;

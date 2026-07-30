@@ -308,8 +308,36 @@ describe('gateProgressFromStart', () => {
       prevProgressM: 0,
       startEngaged: true,
     });
+    // earlyEndCum(n02)=20 이지만 EARLY_PROGRESS_JUMP_M=6 으로 한 틱 상한
     expect(gated.progressM).toBeLessThanOrEqual(20);
-    expect(gated.progressM).toBeLessThanOrEqual(12);
+    expect(gated.progressM).toBeLessThanOrEqual(6);
+  });
+
+  it('needs more than one tick to clear a short n01→n02 (~9m) segment', () => {
+    const short = ensureStepDistances([
+      node('n01', 0),
+      node('n02', 9),
+      node('n03', 71),
+    ]);
+    const pos = { lat: short[2].lat, lng: short[2].lng };
+    const first = gateProgressFromStart({
+      pos,
+      steps: short,
+      rawProgressM: 71,
+      prevProgressM: 0,
+      startEngaged: true,
+    });
+    expect(first.progressM).toBeLessThanOrEqual(6);
+    const second = gateProgressFromStart({
+      pos,
+      steps: short,
+      rawProgressM: 71,
+      prevProgressM: first.progressM,
+      startEngaged: true,
+    });
+    // 두 번째 틱도 early 순차 통과로 n02 cum(9)까지만
+    expect(second.progressM).toBeLessThanOrEqual(9);
+    expect(second.progressM).toBeGreaterThan(first.progressM);
   });
 
   it('caps a huge forward jump after the early zone', () => {

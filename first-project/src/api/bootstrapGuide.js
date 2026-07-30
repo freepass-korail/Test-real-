@@ -3,10 +3,61 @@ import {
   fetchUserGuideSteps,
   fetchTicketGuide,
   fetchTicketGuideSteps,
+  fetchTts,
 } from './tickets';
 import useFlowStore from '../store/useFlowStore';
 import { clearSession } from '../utils/session';
 import { resolveStepIndexFromProgress } from '../utils/geo';
+
+/**
+ * BE guide/steps가 출발 노드(n01 등)를 빼먹는 경우 —
+ * route directions 문구로 화면/음성을 채운다.
+ */
+function fillMissingStartGuide(audioMap, screenTextMap, routeSteps) {
+  if (!routeSteps?.length) return { audioMap, screenTextMap, startId: null, startText: null };
+
+  for (const step of routeSteps) {
+    const id = step?.nodeId;
+    if (!id) continue;
+    if (!screenTextMap[id] && step.instruction) {
+      screenTextMap[id] = step.instruction;
+    }
+  }
+
+  const startId = routeSteps[0]?.nodeId || null;
+  const startText =
+    (startId && screenTextMap[startId]) || routeSteps[0]?.instruction || null;
+  return { audioMap, screenTextMap, startId, startText };
+}
+
+/** 출발 노드 음성이 없으면 /api/tts 로 합성 후 audioMap에 합친다 */
+function synthesizeStartAudioIfNeeded(startId, startText) {
+  if (!startId || !startText) return;
+  const { audioMap } = useFlowStore.getState();
+  if (audioMap[startId]) return;
+
+  fetchTts(startText)
+    .then((audioBase64) => {
+      if (!audioBase64 || typeof audioBase64 !== 'string') return;
+      const state = useFlowStore.getState();
+      if (state.audioMap[startId]) return;
+      state.setAudioMap({ ...state.audioMap, [startId]: audioBase64 });
+      console.log('[TTS] start fallback synthesized', startId);
+
+      // S5에서 출발 안내를 이미 시도했는데 음성이 없었던 경우 재시도
+      const onNav = state.step === 'S5' || state.step === 'S5_1';
+      if (
+        onNav &&
+        state.announcedPassIndex === 0 &&
+        state.routeSteps[0]?.nodeId === startId
+      ) {
+        state.playCurrentStepAudio();
+      }
+    })
+    .catch((err) => {
+      console.warn('[TTS] start fallback 합성 실패:', err);
+    });
+}
 
 /**
  * URL에서 ticketId 추출 (?ticketId=19 또는 ?ticket=19)
@@ -62,19 +113,25 @@ export function applyGuideSteps(stepsRes) {
     if (s.screenText) screenTextMap[s.nodeId] = s.screenText;
   });
 
+  const filled = fillMissingStartGuide(audioMap, screenTextMap, routeSteps);
+
   console.log(
     '[TTS] guide/steps 로드 완료 | steps:',
     stepsRes.steps.length,
     '| audioMap keys:',
-    Object.keys(audioMap),
+    Object.keys(filled.audioMap),
     '| screenTextMap keys:',
-    Object.keys(screenTextMap),
+    Object.keys(filled.screenTextMap),
     '| states:',
     (stepsRes.states || []).map((s) => s.state),
+    filled.startId && !audioMap[filled.startId]
+      ? `| startFallback=${filled.startId}`
+      : '',
   );
 
-  setAudioMap(audioMap);
-  setScreenTextMap(screenTextMap);
+  setAudioMap(filled.audioMap);
+  setScreenTextMap(filled.screenTextMap);
+  synthesizeStartAudioIfNeeded(filled.startId, filled.startText);
 
   if (!routeSteps?.length) {
     return;
@@ -85,7 +142,7 @@ export function applyGuideSteps(stepsRes) {
   if (!navigating) {
     const firstId = routeSteps[0]?.nodeId;
     const firstText =
-      (firstId && screenTextMap[firstId]) ||
+      (firstId && filled.screenTextMap[firstId]) ||
       (firstId && prevScreenText?.[firstId]) ||
       routeSteps[0]?.instruction ||
       '';
