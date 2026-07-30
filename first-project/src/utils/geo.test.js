@@ -282,17 +282,31 @@ describe('gateProgressFromStart', () => {
     expect(gated.progressM).toBeCloseTo(5, 5);
   });
 
-  it('caps a huge forward jump after engage', () => {
-    const pos = { lat: node('p', 10).lat, lng: node('p', 10).lng };
+  it('does not skip n01/n02 in one jump even if raw GPS projects far ahead', () => {
+    const pos = { lat: node('p', 5).lat, lng: node('p', 5).lng };
+    const gated = gateProgressFromStart({
+      pos,
+      steps,
+      rawProgressM: 100, // n11으로 투영된 것처럼
+      prevProgressM: 0,
+      startEngaged: true,
+    });
+    // 초반 점프 12m + n02 경계(20m) 캡 → 한 틱에 n03 이상으로 못 감
+    expect(gated.progressM).toBeLessThanOrEqual(20);
+    expect(gated.progressM).toBeLessThanOrEqual(12);
+  });
+
+  it('caps a huge forward jump after the early zone', () => {
+    const pos = { lat: node('p', 25).lat, lng: node('p', 25).lng };
     const gated = gateProgressFromStart({
       pos,
       steps,
       rawProgressM: 200,
-      prevProgressM: 10,
+      prevProgressM: 20, // 이미 n02 통과
       startEngaged: true,
       maxJumpM: 45,
     });
-    expect(gated.progressM).toBe(55);
+    expect(gated.progressM).toBe(65);
     expect(gated.lockedAtStart).toBe(false);
   });
 });

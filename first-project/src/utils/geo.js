@@ -323,11 +323,20 @@ export const OVERSHOOT_THRESHOLD_M = 15;
  */
 export const START_ENGAGE_RADIUS_M = 30;
 
-/** 출발 잠금 해제 후, 한 GPS 샘플에서 허용하는 최대 진행 점프(m) */
+/** 출발 잠금 해제 후(초반 구간 이후), 한 GPS 샘플에서 허용하는 최대 진행 점프(m) */
 export const MAX_PROGRESS_JUMP_M = 45;
 
 /**
- * 출발 노드 근접 전 진행도 잠금 + 과도한 전방 점프 제한.
+ * 초반 노드(n01·n02) 구간에서는 점프를 더 작게 — 한 틱에 두 노드를 건너뛰지 않게.
+ * (실내 GPS가 n03 쪽으로 튀면 18+19 < 45 로 n01·n02가 스킵되던 문제)
+ */
+export const EARLY_PROGRESS_JUMP_M = 12;
+
+/** 순서 통과를 강제할 초반 노드 개수 (index 0..count-1) */
+export const EARLY_NODE_COUNT = 2;
+
+/**
+ * 출발 노드 근접 전 진행도 잠금 + 과도한 전방 점프 제한 + 초반 노드 스킵 방지.
  * @returns {{
  *   progressM: number,
  *   startEngaged: boolean,
@@ -343,6 +352,8 @@ export function gateProgressFromStart({
   startEngaged = false,
   startEngageRadiusM = START_ENGAGE_RADIUS_M,
   maxJumpM = MAX_PROGRESS_JUMP_M,
+  earlyJumpM = EARLY_PROGRESS_JUMP_M,
+  earlyNodeCount = EARLY_NODE_COUNT,
 }) {
   const start = steps[0];
   if (!pos || !start?.lat || !start?.lng) {
@@ -366,8 +377,31 @@ export function gateProgressFromStart({
 
   const raw = Math.max(0, Number(rawProgressM) || 0);
   const prev = Math.max(0, Number(prevProgressM) || 0);
-  // 뒤로 가는 건 허용(되돌아감). 앞으로는 한 틱에 maxJumpM까지만.
-  const progressM = raw > prev + maxJumpM ? prev + maxJumpM : raw;
+
+  const earlyLastIdx = Math.min(
+    Math.max(0, earlyNodeCount - 1),
+    Math.max(0, steps.length - 1),
+  );
+  const earlyEndCum = Math.max(0, Number(steps[earlyLastIdx]?.cumulativeDistanceM) || 0);
+  const inEarlyZone = prev < earlyEndCum;
+  const jumpLimit = inEarlyZone ? Math.min(maxJumpM, earlyJumpM) : maxJumpM;
+
+  // 뒤로 가는 건 허용(되돌아감). 앞으로는 한 틱에 jumpLimit까지만.
+  let progressM = raw > prev + jumpLimit ? prev + jumpLimit : raw;
+
+  // 초반 노드(n01·n02)는 스킵 금지 — n02 cum을 넘기기 전에는 그 이상으로 점프 불가
+  // + 다음 초반 경계까지만 한 칸씩 허용
+  if (inEarlyZone && steps.length > 1) {
+    progressM = Math.min(progressM, earlyEndCum);
+    for (let i = 1; i <= earlyLastIdx; i += 1) {
+      const cum = Number(steps[i].cumulativeDistanceM) || 0;
+      if (prev < cum) {
+        progressM = Math.min(progressM, cum);
+        break;
+      }
+    }
+  }
+
   return {
     progressM,
     startEngaged: true,
@@ -526,9 +560,15 @@ export function ensureStepDistances(steps = []) {
 
 /**
  * Sensors에서 중간 노드 좌표를 넣을 때 cum 스냅 반경.
- * n01↔n02 평면 ~9m라 mid(~4.5m)가 큰 스냅에 걸리면 s가 안 늘어남 → 작게 유지.
+ * n01↔n02 평면 ~9m라 mid(~4.5m)가 큰 스냅에 걸리면 s가 안 늘어남 → 기본은 작게 유지.
  */
 export const ROUTE_NODE_SNAP_M = 3;
+
+/**
+ * 초반 노드(n01·n02)는 실내 GPS 오차(10~25m)를 고려해 스냅을 넓힘.
+ * 기본 3m면 거의 안 잡혀서 통과 안내가 스킵됨.
+ */
+export const EARLY_NODE_SNAP_M = 8;
 
 /**
  * 최종 목적지(마지막 노드) 평면 근접 시 s를 끝까지 스냅.
@@ -539,6 +579,10 @@ export const ROUTE_FINAL_NODE_SNAP_M = 8;
 
 /** 세그먼트 끝점(t≈0/1)이면 노드 cum으로 스냅 */
 export const ROUTE_SEGMENT_END_SNAP_T = 0.12;
+
+function nodeSnapRadiusM(index) {
+  return index < EARLY_NODE_COUNT ? EARLY_NODE_SNAP_M : ROUTE_NODE_SNAP_M;
+}
 
 /**
  * GPS를 경로에 투영한 진행거리 s(m).
@@ -556,10 +600,13 @@ export function getProgressAlongRouteM(pos, steps = []) {
   }
 
   // 1) 가까운 중간 노드면 그 노드 cum (최종 노드 제외 — 아래에서 도착권일 때만 스냅)
+  //    초반 노드는 EARLY_NODE_SNAP_M으로 더 넓게 받음
   let snapIdx = -1;
-  let snapDist = ROUTE_NODE_SNAP_M;
+  let snapDist = Infinity;
   for (let i = 0; i < lastIdx; i += 1) {
+    const radius = nodeSnapRadiusM(i);
     const d = getDistanceMeters(pos.lat, pos.lng, steps[i].lat, steps[i].lng);
+    if (d > radius + 1e-6) continue;
     if (d < snapDist - 1e-6 || (Math.abs(d - snapDist) <= 1e-6 && i > snapIdx)) {
       snapDist = d;
       snapIdx = i;
