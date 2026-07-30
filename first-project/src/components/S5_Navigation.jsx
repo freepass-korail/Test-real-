@@ -129,6 +129,7 @@ function S5_Navigation() {
   const distanceM = useFlowStore((s) => s.distanceM);
   const currentStepIndex = useFlowStore((s) => s.currentStepIndex);
   const destinationAngle = useFlowStore((s) => s.destinationAngle);
+  const headingReady = useFlowStore((s) => s.headingReady);
   const geoError = useFlowStore((s) => s.geoError);
   const setGeoError = useFlowStore((s) => s.setGeoError);
   const isTracking = useFlowStore((s) => s.isTracking);
@@ -231,7 +232,8 @@ function S5_Navigation() {
     [compass, destinationAngle]
   );
 
-  const compassOpacity = isTracking && distanceM == null ? 0.45 : 1;
+  const compassOpacity =
+    isTracking && (distanceM == null || !headingReady) ? 0.45 : 1;
 
   const handleClose = () => {
     stopTracking();

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { playBase64Audio, playBase64AudioQueue, preloadAudioMap } from '../utils/audio';
 import { clearSession, loadSession, saveSession } from '../utils/session';
-import { ensureStepDistances, getRemainingToTargetM } from '../utils/geo';
+import { ensureStepDistances } from '../utils/geo';
 import { normalizeGuideStates } from '../utils/guideStates';
 
 const emptyTicket = {
@@ -63,6 +63,7 @@ const useFlowStore = create((set, get) => ({
   })(),
   position: null,
   heading: 0,
+  headingReady: _saved?.headingReady ?? false,
   bearing: null,
   distanceM: null,
   destinationAngle: 0,
@@ -154,14 +155,11 @@ const useFlowStore = create((set, get) => ({
       currentInstruction: firstInstruction,
       destination: stepToDestination(target),
       routeError: null,
-      // UI 표시 = 첫 목표(다음 노드)까지 BE 거리 — 안내 문구 m과 동일
-      distanceM: (() => {
-        const toFirst = getRemainingToTargetM(0, steps.length > 1 ? 1 : 0, steps);
-        if (toFirst > 0) return Math.round(toFirst);
-        return route?.totalDistanceM ?? null;
-      })(),
+      // GPS 확보 전 null — S5 opacity / "위치 확인 중" 장치
+      distanceM: null,
       bearing: null,
       destinationAngle: 0,
+      headingReady: false,
       overshoot: false,
       altRoute: false,
     });
@@ -382,6 +380,7 @@ const useFlowStore = create((set, get) => ({
       destination: null,
       position: null,
       heading: 0,
+      headingReady: false,
       bearing: null,
       distanceM: null,
       destinationAngle: 0,

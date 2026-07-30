@@ -19,7 +19,6 @@ import {
   resolveStepIndexFromProgress,
   shouldArriveByRemain,
   shortestAngleDelta,
-  stepAngleTowards,
   WRONG_DIRECTION_ANGLE_DEG,
   WRONG_DIRECTION_AWAY_M,
 } from '../utils/geo';
@@ -27,15 +26,10 @@ import useDeviceOrientation from './useDeviceOrientation';
 import useGeolocation from './useGeolocation';
 import { GUIDE_STATE } from '../utils/guideStates';
 
-/** panTo 쓰로틀 (ms) — 매 GPS pan은 지도/메인스레드 부하 */
+/** panTo 쓰로틀 (ms) */
 const PAN_THROTTLE_MS = 2000;
-/** 이 속도(m/s) 이상이면 GPS course를 화살표 heading으로 우선 */
+/** 이 속도(m/s) 이상이면 GPS course를 heading으로 우선 */
 const GPS_COURSE_MIN_SPEED_MPS = 0.6;
-/**
- * 나침반이 아직 없을 때, 이 거리(m) 이상 GPS가 움직이면
- * 이동 방위를 heading으로 씀 (역내 자기장/상대 센서 실패 대비)
- */
-const MOVE_COURSE_MIN_M = 3;
 /** 최종 노드 근처에서만 반대방향을 '지나침'으로 해석 */
 const WRONG_DIR_OVERSHOOT_NEAR_M = 30;
 
@@ -52,19 +46,12 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
   const lastPanAtRef = useRef(0);
   const lastNavSigRef = useRef('');
   const lastPassRef = useRef(-1);
-  /** 출발 노드 근처에 한 번이라도 들어오면 true — 그 전엔 중간 투영으로 진행도 올리지 않음 */
+  /** 첫 GPS fix로 경로 진입(localization) 완료 */
   const startEngagedRef = useRef(false);
   const progressMRef = useRef(0);
-  /** 실제 나침반 이벤트를 받기 전엔 heading=0 고정 → 반대방향 오판 방지 */
+  /** 나침반(또는 GPS course) heading 확보 */
   const headingReadyRef = useRef(false);
-  /** deviceorientation으로 나침반을 받은 적 있는지 (없으면 GPS 이동 방위 폴백) */
   const compassHeardRef = useRef(false);
-  /** 나침반 미수신 시 GPS 이동으로 추정한 heading */
-  const moveHeadingRef = useRef(null);
-  /** 화살표 표시각 — 실시간 반감기 감쇠 + 초당 회전각 상한 적용 (원시 방위각과 별개) */
-  const smoothedAngleRef = useRef(0);
-  const lastAngleTsRef = useRef(null);
-  /** Sensors 폴링(250ms) 기준 — 1회면 GPS 한 틱에 조기 도착할 수 있어 2회 */
   const ARRIVAL_CONFIRM_HITS = 2;
   const WRONG_DIR_CONFIRM_HITS = 2;
 
@@ -91,11 +78,11 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
         overshoot: prevOvershoot,
         heading: compassHeading,
         announcedPassIndex,
+        headingReady: storeHeadingReady,
       } = useFlowStore.getState();
 
       if (!steps?.length) return;
 
-      // 이동 중 GPS course가 있으면 나침반보다 우선 (역내 자기장으로 화살표 180° 뒤집힘 완화)
       const gpsHeading = geoPos?.coords?.heading;
       const gpsSpeed = geoPos?.coords?.speed;
       const useGpsCourse =
@@ -105,36 +92,17 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
         Number(gpsSpeed) >= GPS_COURSE_MIN_SPEED_MPS;
 
       let heading = compassHeading;
+      let headingReady = storeHeadingReady || headingReadyRef.current;
       if (useGpsCourse) {
         heading = normalizeAngle(Number(gpsHeading));
+        headingReady = true;
         headingReadyRef.current = true;
-      } else if (!compassHeardRef.current) {
-        // 나침반 미수신: GPS 이동 방위로 화살표라도 돌림 (역내·상대센서-only 대비)
-        if (lastPosRef.current && pos) {
-          const moved = getDistanceMeters(
-            lastPosRef.current.lat,
-            lastPosRef.current.lng,
-            pos.lat,
-            pos.lng,
-          );
-          if (moved >= MOVE_COURSE_MIN_M) {
-            moveHeadingRef.current = getBearing(
-              lastPosRef.current.lat,
-              lastPosRef.current.lng,
-              pos.lat,
-              pos.lng,
-            );
-            headingReadyRef.current = true;
-          }
-        }
-        if (moveHeadingRef.current != null) {
-          heading = moveHeadingRef.current;
-        }
+      } else if (compassHeardRef.current && compassHeading != null) {
+        heading = compassHeading;
+        headingReady = true;
+        headingReadyRef.current = true;
       }
 
-      // raw GPS 기준 — 거리·통과·음성 모두 즉시 (EMA/maxStep 없음)
-      // 단, 출발 노드 근접 전에는 중간 경로 투영으로 진행도를 올리지 않음
-      // n02 통과 후에는 n01 등 초반 cum 아래로 스냅/투영되지 않음 (출발 안내 되감기 방지)
       const earlyLastIdx = Math.min(
         Math.max(0, steps.length - 1),
         Math.max(0, EARLY_NODE_COUNT - 1),
@@ -174,12 +142,11 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
         progressM,
         steps,
       );
-      // 출발 잠금 중: 거리는 출발 노드까지 — 중간 구간(19m 에스컬레이터 등)으로 점프하지 않음
+      // localization 전: distanceM null 유지 (opacity·"위치 확인 중" 장치)
       const distanceM = lockedAtStart
-        ? gated.distToStartM
+        ? null
         : getRemainingToTargetM(progressM, targetIndex, steps);
 
-      // 통과선/목표 변경 시 즉시 TTS·문구 sync
       const prevTarget = useFlowStore.getState().currentStepIndex;
       const stepChanged =
         !lockedAtStart &&
@@ -187,27 +154,22 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
           passedIndex !== lastPassRef.current ||
           targetIndex !== prevTarget);
       if (lockedAtStart) {
-        if (lastPassRef.current !== 0) {
+        if (lastPassRef.current !== -2) {
           console.log(
-            `[NAV] start-lock distStart=${gated.distToStartM.toFixed(1)}m` +
-              ` (raw s=${rawProgressM.toFixed(1)}m → hold 출발 안내)`,
+            `[NAV] localize-wait distRoute=${gated.distToRouteM.toFixed(1)}m` +
+              ` distStart=${gated.distToStartM.toFixed(1)}m`,
           );
-          const start = steps[0];
-          const { screenTextMap } = useFlowStore.getState();
-          const startInstruction =
-            (start?.nodeId && screenTextMap[start.nodeId]) || start?.instruction || '';
           setNavigation({
             progressM: 0,
+            distanceM: null,
+            headingReady,
             announcedPassIndex: 0,
             currentStepIndex: 0,
-            currentInstruction: startInstruction,
-            destination: start
-              ? { lat: start.lat, lng: start.lng, label: start.name ?? '' }
-              : null,
+            destinationAngle: headingReady ? useFlowStore.getState().destinationAngle : 0,
             overshoot: false,
             altRoute: false,
           });
-          lastPassRef.current = 0;
+          lastPassRef.current = -2;
         }
       } else if (stepChanged) {
         console.log(
@@ -219,7 +181,6 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
           { progressM, passedIndex, targetIndex, guideIndex },
           { playAudio: true },
         );
-        // sync 성공 여부와 무관하게 통과 인덱스는 반영 (audio 미준비여도 문구는 갱신돼야 함)
         lastPassRef.current = passedIndex;
       }
 
@@ -230,7 +191,6 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
           ? getDistanceMeters(pos.lat, pos.lng, lastStep.lat, lastStep.lng)
           : Infinity;
 
-      // 도착 = 마지막 구간 remain 기준 (짧은 마지막 구간은 조기 도착 방지)
       const onFinalStep =
         !lockedAtStart && (targetIndex >= lastIdx || passedIndex >= lastIdx);
       const lastCum = Number(lastStep?.cumulativeDistanceM) || 0;
@@ -239,6 +199,7 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
       const lastSegLenM = Math.max(0, lastCum - prevCum);
       const remainArrived =
         !lockedAtStart &&
+        distanceM != null &&
         shouldArriveByRemain({
           onFinalStep,
           distanceM,
@@ -247,7 +208,7 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
           lastIdx,
           lastSegLenM,
         });
-      const distShown = Math.round(distanceM);
+      const distShown = distanceM == null ? null : Math.round(distanceM);
 
       const finishArrival = (reason) => {
         console.log(
@@ -261,13 +222,11 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
         setStep('S5_1');
       };
 
-      // 0m는 S5에 그리지 않고 바로 도착 화면
-      if (onFinalStep && distShown <= 0) {
+      if (onFinalStep && distShown != null && distShown <= 0) {
         finishArrival('remain≈0');
         return;
       }
 
-      // 출발 잠금 중에는 화살표가 출발 노드를 가리킴
       const dest = lockedAtStart ? steps[0] : steps[targetIndex];
       if (!dest?.lat || !dest?.lng) {
         if (remainArrived) {
@@ -289,27 +248,14 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
           ? distToLastNode
           : getDistanceMeters(pos.lat, pos.lng, dest.lat, dest.lng);
 
-      // 화살표는 목표 노드에 근접하면 다음 노드 쪽으로 미리 방향을 틀어,
-      // 노드를 스치는 순간 방위각이 급변하는 걸 완화한다 (거리·도착 판정은 dest 그대로 사용)
       const aimPoint = lockedAtStart || isLastStep
         ? dest
         : (getArrowAimPoint(pos, steps, targetIndex) ?? dest);
       const bearing = getBearing(pos.lat, pos.lng, aimPoint.lat, aimPoint.lng);
-      const rawDestinationAngle = getArrowRotation(bearing, heading);
-
-      // 화면에 표시할 각도는 실제 경과 시간(dt) 기준 반감기 감쇠 + 초당 회전각 상한을 적용
-      // (자기장 왜곡 등으로 원시 목표각이 순간적으로 크게 튀어도 회전 속도는 일정하게 유지)
-      const angleTs = geoPos?.timestamp ?? Date.now();
-      const destinationAngle =
-        lastAngleTsRef.current == null
-          ? rawDestinationAngle
-          : stepAngleTowards(
-              smoothedAngleRef.current,
-              rawDestinationAngle,
-              angleTs - lastAngleTsRef.current,
-            );
-      smoothedAngleRef.current = destinationAngle;
-      lastAngleTsRef.current = angleTs;
+      // 단일 필터: raw 각도를 store에 넣고, 화면만 useFollowAngle로 추종
+      const destinationAngle = headingReady
+        ? getArrowRotation(bearing, heading ?? 0)
+        : 0;
 
       if (isLastStep && rawDistanceM < minDistanceRef.current) {
         minDistanceRef.current = rawDistanceM;
@@ -321,10 +267,9 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
         rawDistanceM > minDistanceRef.current + OVERSHOOT_THRESHOLD_M;
       lastNodeOvershootRef.current = lastNodeOvershoot;
 
-      // 반대방향 판정은 화면 표시각이 아니라 원시 방위각 기준 (지연 없이 즉시 반응해야 함)
       const facingOpposite =
-        headingReadyRef.current &&
-        Math.abs(rawDestinationAngle) >= WRONG_DIRECTION_ANGLE_DEG;
+        headingReady &&
+        Math.abs(destinationAngle) >= WRONG_DIRECTION_ANGLE_DEG;
       const prevRaw = prevRawDistanceRef.current;
       const movingAway =
         prevRaw != null && rawDistanceM >= prevRaw + WRONG_DIRECTION_AWAY_M;
@@ -349,7 +294,6 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
 
       let nextAltRoute = prevAltRoute;
       if (lockedAtStart) {
-        // 출발 전(시작점 미도달)에는 이탈/중간 구간 오판으로 빨간 화면을 띄우지 않음
         offRouteHitsRef.current = 0;
         onRouteHitsRef.current = 0;
         nextAltRoute = false;
@@ -374,10 +318,8 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
         nextAltRoute = false;
       }
 
-      // 의미 있는 변화만 store 갱신 → S5 리렌더 폭주 방지
-      // 0m는 위에서 이미 S5_1로 보냄 — 여기선 1m 이상만 표시
       const angleShown = Math.round(destinationAngle);
-      const navSig = `${distShown}|${angleShown}|${isOvershoot}|${nextAltRoute}|${targetIndex}`;
+      const navSig = `${distShown}|${angleShown}|${isOvershoot}|${nextAltRoute}|${targetIndex}|${headingReady}`;
       if (navSig !== lastNavSigRef.current) {
         lastNavSigRef.current = navSig;
         setNavigation({
@@ -385,14 +327,14 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
           distanceM: distShown,
           progressM,
           bearing,
-          heading,
+          heading: heading ?? 0,
+          headingReady,
           destinationAngle: angleShown,
           overshoot: isOvershoot,
           altRoute: nextAltRoute,
         });
       }
 
-      // 예외 상태 TTS — BE guide/steps.states 카탈로그 (진입 시 1회)
       const { playGuideState, clearGuideStateAnnounce } = useFlowStore.getState();
       if (nextAltRoute && !prevAltRoute) {
         playGuideState(GUIDE_STATE.OFF_ROUTE);
@@ -403,15 +345,16 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
       }
 
       mapInstance?.setMarkerPosition?.(pos.lat, pos.lng);
-      mapInstance?.setMarkerRotation?.(heading);
+      if (headingReady && heading != null) {
+        mapInstance?.setMarkerRotation?.(heading);
+      }
 
-      const now = Date.now();
+      const now = performance.now();
       if (posJump >= 12 || now - lastPanAtRef.current >= PAN_THROTTLE_MS) {
         lastPanAtRef.current = now;
         mapInstance?.panTo?.({ lat: pos.lat, lng: pos.lng });
       }
 
-      // remain 도착 조건 충족 시 확인 후 S5_1 (짧은 마지막 구간 조기 도착 방지 포함)
       if (remainArrived) {
         arrivalHitsRef.current += 1;
         if (arrivalHitsRef.current >= ARRIVAL_CONFIRM_HITS) {
@@ -433,7 +376,6 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
     (heading) => {
       compassHeardRef.current = true;
       headingReadyRef.current = true;
-      moveHeadingRef.current = null;
       const {
         position,
         bearing: storedBearing,
@@ -442,34 +384,25 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
         routeSteps,
         currentStepIndex,
         distanceM,
-      } =
-        useFlowStore.getState();
+      } = useFlowStore.getState();
+
+      setNavigation({ heading, headingReady: true });
+
       if (!dest?.lat || !dest?.lng) return;
 
       const bearing =
         storedBearing ??
         (position ? getBearing(position.lat, position.lng, dest.lat, dest.lng) : null);
-      const rawDestinationAngle = bearing != null ? getArrowRotation(bearing, heading) : 0;
+      const destinationAngle =
+        bearing != null ? getArrowRotation(bearing, heading) : 0;
 
       if (bearing != null) {
-        if (Math.abs(rawDestinationAngle) >= WRONG_DIRECTION_ANGLE_DEG) {
+        if (Math.abs(destinationAngle) >= WRONG_DIRECTION_ANGLE_DEG) {
           wrongDirHitsRef.current += 1;
         } else {
           wrongDirHitsRef.current = Math.max(0, wrongDirHitsRef.current - 1);
         }
       }
-
-      const angleTs = Date.now();
-      const destinationAngle =
-        lastAngleTsRef.current == null
-          ? rawDestinationAngle
-          : stepAngleTowards(
-              smoothedAngleRef.current,
-              rawDestinationAngle,
-              angleTs - lastAngleTsRef.current,
-            );
-      smoothedAngleRef.current = destinationAngle;
-      lastAngleTsRef.current = angleTs;
 
       const isWrongDirection = wrongDirHitsRef.current >= WRONG_DIR_CONFIRM_HITS;
       const lastIdx = (routeSteps?.length ?? 0) - 1;
@@ -482,7 +415,6 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
         lastNodeOvershootRef.current || (isWrongDirection && canTreatWrongDirAsOvershoot);
       const angleShown = Math.round(destinationAngle);
 
-      // 1°만 바뀌어도 반영 — 폰 회전에 화살표가 바로 따라오게
       const prevAngle = useFlowStore.getState().destinationAngle ?? 0;
       if (
         Math.abs(shortestAngleDelta(prevAngle, angleShown)) >= 1 ||
@@ -490,6 +422,7 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
       ) {
         setNavigation({
           heading,
+          headingReady: true,
           bearing,
           destinationAngle: angleShown,
           overshoot: isOvershoot,
@@ -520,19 +453,16 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
     progressMRef.current = 0;
     headingReadyRef.current = false;
     compassHeardRef.current = false;
-    moveHeadingRef.current = null;
-    smoothedAngleRef.current = 0;
-    lastAngleTsRef.current = null;
     const steps = useFlowStore.getState().routeSteps || [];
     const firstTarget = steps.length > 1 ? 1 : 0;
-    const initialRemain = getRemainingToTargetM(0, firstTarget, steps);
     const first = steps[0];
     const { screenTextMap } = useFlowStore.getState();
     const startInstruction =
       (first?.nodeId && screenTextMap[first.nodeId]) || first?.instruction || '';
     setNavigation({
       position: null,
-      distanceM: initialRemain > 0 ? Math.round(initialRemain) : null,
+      // GPS·heading 확보 전 null — opacity / "위치 확인 중" 복구
+      distanceM: null,
       progressM: 0,
       announcedPassIndex: 0,
       currentStepIndex: firstTarget,
@@ -547,6 +477,7 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
       bearing: null,
       destinationAngle: 0,
       heading: 0,
+      headingReady: false,
       isTracking: true,
       overshoot: false,
       altRoute: false,
@@ -558,7 +489,7 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
   const stopTracking = useCallback(() => {
     stopWatch();
     stopListening();
-    setNavigation({ isTracking: false });
+    setNavigation({ isTracking: false, headingReady: false });
   }, [setNavigation, stopListening, stopWatch]);
 
   stopTrackingRef.current = stopTracking;

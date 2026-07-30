@@ -255,8 +255,9 @@ describe('gateProgressFromStart', () => {
     node('n11', 100),
   ]);
 
-  it('locks progress at 0 when GPS is far from the start node', () => {
-    const pos = { lat: node('p', 100).lat, lng: node('p', 100).lng }; // n11 근처
+  it('locks until first fix is near the route (not only start node)', () => {
+    // 경로에서 멀리 떨어진 점 (north 500m)
+    const pos = { lat: node('p', 0, 500).lat, lng: node('p', 0, 500).lng };
     const gated = gateProgressFromStart({
       pos,
       steps,
@@ -267,7 +268,20 @@ describe('gateProgressFromStart', () => {
     expect(gated.lockedAtStart).toBe(true);
     expect(gated.startEngaged).toBe(false);
     expect(gated.progressM).toBe(0);
-    expect(gated.distToStartM).toBeGreaterThan(START_ENGAGE_RADIUS_M);
+  });
+
+  it('localizes entry on first fix near a mid-route node', () => {
+    const pos = { lat: steps[2].lat, lng: steps[2].lng }; // n03
+    const gated = gateProgressFromStart({
+      pos,
+      steps,
+      rawProgressM: 40,
+      prevProgressM: 0,
+      startEngaged: false,
+    });
+    expect(gated.lockedAtStart).toBe(false);
+    expect(gated.startEngaged).toBe(true);
+    expect(gated.progressM).toBeCloseTo(40, 5);
   });
 
   it('engages once GPS is within START_ENGAGE_RADIUS_M of start', () => {
@@ -289,11 +303,10 @@ describe('gateProgressFromStart', () => {
     const gated = gateProgressFromStart({
       pos,
       steps,
-      rawProgressM: 100, // n11으로 투영된 것처럼
+      rawProgressM: 100,
       prevProgressM: 0,
       startEngaged: true,
     });
-    // 초반 점프 12m + n02 경계(20m) 캡 → 한 틱에 n03 이상으로 못 감
     expect(gated.progressM).toBeLessThanOrEqual(20);
     expect(gated.progressM).toBeLessThanOrEqual(12);
   });
@@ -304,7 +317,7 @@ describe('gateProgressFromStart', () => {
       pos,
       steps,
       rawProgressM: 200,
-      prevProgressM: 20, // 이미 n02 통과
+      prevProgressM: 20,
       startEngaged: true,
       maxJumpM: 45,
     });
@@ -317,7 +330,7 @@ describe('gateProgressFromStart', () => {
     const gated = gateProgressFromStart({
       pos,
       steps,
-      rawProgressM: 25, // 8m만 뒤로
+      rawProgressM: 25,
       prevProgressM: 33,
       startEngaged: true,
       backtrackHysteresisM: 12,

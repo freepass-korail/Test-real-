@@ -55,29 +55,23 @@ export function smoothAngle(prev, next, alpha = 0.2) {
   return normalizeAngle(prev + delta * alpha);
 }
 
-/** 나침반 데드밴드 — 0이면 필터 없음(폰 회전에 즉시 반응) */
-export const HEADING_DEADBAND_DEG = 0;
+/** 나침반 데드밴드(°) — 1단 필터 전 초미세 노이즈만 (0이면 전부 통과) */
+export const HEADING_DEADBAND_DEG = 0.75;
 
-/** 화살표가 목표각을 따라가는 속도 (1에 가까울수록 즉시) */
+/** @deprecated 표시 추종은 useFollowAngle(시간 기반) 단일 계층 — 레거시 상수 */
 export const ARROW_FOLLOW = 0.45;
 
 /**
- * 목표 방위각 반감기(ms) — dt(경과 시간) 동안 남은 각도 차이의 몇 %를 좁힐지 결정.
- * requestAnimationFrame 프레임률에 의존하지 않고 실제 경과 시간 기준으로 동작한다.
- * 클수록 목표각을 향해 더 천천히·부드럽게 따라간다.
+ * 화살표 추종 반감기(ms) — useFollowAngle 단일 필터.
+ * 작을수록 네이버지도처럼 즉시 반응.
  */
-export const ARROW_HALF_LIFE_MS = 80;
+export const ARROW_HALF_LIFE_MS = 90;
 
-/** 화살표가 초당 이 각도(°) 이상 회전하지 못하도록 상한 — 폰을 빨리 돌려도 따라가게 */
+/** @deprecated stepAngleTowards 제거됨 — 테스트 호환용으로만 유지 */
 export const MAX_TURN_DEG_PER_SEC = 540;
 
 /**
- * 실시간 경과(dt)를 반영한 반감기 감쇠 + 초당 회전각 상한을 적용해 다음 각도를 계산한다.
- * (turn-by-turn 내비게이션에서 흔히 쓰는 방식: "얼마나 빨리 따라잡을지"와
- *  "최대 얼마나 빨리 돌 수 있는지"를 분리해서, 큰 목표 변화에도 회전 속도가 일정하다.)
- * @param {number} prev 이전 각도(°)
- * @param {number} target 목표 각도(°)
- * @param {number} dtMs 이전 갱신 이후 실제 경과 시간(ms)
+ * @deprecated 화살표는 useFollowAngle만 사용. 호출부에서 제거됨.
  */
 export function stepAngleTowards(
   prev,
@@ -316,9 +310,14 @@ export function getNavigationInstruction(distanceM, instruction) {
 export const OVERSHOOT_THRESHOLD_M = 15;
 
 /**
- * 안내 시작 직후: 출발 노드(steps[0])에 이 거리(m) 안으로 들어오기 전에는
- * 경로 중간 투영으로 진행도를 올리지 않는다.
- * (실내 GPS가 승강장/에스컬레이터 쪽에 잡혀 출발 안내가 스킵되는 것 방지)
+ * 안내 시작: 첫 GPS fix로 경로 위 진입점을 찾는다.
+ * 경로(폴리라인)에 이 거리(m) 이내면 그 투영점을 진입 progress로 채택.
+ */
+export const LOCALIZE_MAX_ROUTE_DIST_M = 35;
+
+/**
+ * 출발 노드 근접 반경 — localize 보조 (경로에서 멀지만 출발 근처일 때)
+ * @deprecated LOCALIZE_MAX_ROUTE_DIST_M 우선. 하위 호환·테스트용.
  */
 export const START_ENGAGE_RADIUS_M = 30;
 
@@ -341,13 +340,13 @@ export const EARLY_NODE_COUNT = 2;
 export const PROGRESS_BACKTRACK_HYSTERESIS_M = 12;
 
 /**
- * 출발 노드 근접 전 진행도 잠금 + 과도한 전방 점프 제한 + 초반 노드 스킵 방지
- * + 뒤로가기 히스테리시스.
+ * 첫 fix localization + 전방 점프 제한 + 초반 노드 스킵 방지 + 뒤로가기 히스테리시스.
  * @returns {{
  *   progressM: number,
  *   startEngaged: boolean,
  *   lockedAtStart: boolean,
  *   distToStartM: number,
+ *   distToRouteM: number,
  * }}
  */
 export function gateProgressFromStart({
@@ -356,6 +355,7 @@ export function gateProgressFromStart({
   rawProgressM = 0,
   prevProgressM = 0,
   startEngaged = false,
+  localizeMaxRouteDistM = LOCALIZE_MAX_ROUTE_DIST_M,
   startEngageRadiusM = START_ENGAGE_RADIUS_M,
   maxJumpM = MAX_PROGRESS_JUMP_M,
   earlyJumpM = EARLY_PROGRESS_JUMP_M,
@@ -369,16 +369,34 @@ export function gateProgressFromStart({
       startEngaged: true,
       lockedAtStart: false,
       distToStartM: Infinity,
+      distToRouteM: Infinity,
     };
   }
 
   const distToStartM = getDistanceMeters(pos.lat, pos.lng, start.lat, start.lng);
-  if (!startEngaged && distToStartM > startEngageRadiusM) {
+  const distToRouteM = getDistanceToRouteMeters(pos, steps);
+
+  // 미진입: 경로 위(또는 출발 근처)면 첫 fix로 진입 노드/구간 확정
+  if (!startEngaged) {
+    const onRoute = distToRouteM <= localizeMaxRouteDistM;
+    const nearStart = distToStartM <= startEngageRadiusM;
+    if (!onRoute && !nearStart) {
+      return {
+        progressM: 0,
+        startEngaged: false,
+        lockedAtStart: true,
+        distToStartM,
+        distToRouteM,
+      };
+    }
+    // 진입: 투영 progress를 시작점으로 (출발만 가까우면 raw≈0에 가깝게 유지됨)
+    const entry = Math.max(0, Number(rawProgressM) || 0);
     return {
-      progressM: 0,
-      startEngaged: false,
-      lockedAtStart: true,
+      progressM: nearStart && !onRoute ? 0 : entry,
+      startEngaged: true,
+      lockedAtStart: false,
       distToStartM,
+      distToRouteM,
     };
   }
 
@@ -395,15 +413,11 @@ export function gateProgressFromStart({
 
   let progressM = raw;
   if (raw > prev + jumpLimit) {
-    // 전방 점프 상한
     progressM = prev + jumpLimit;
   } else if (raw < prev && prev - raw < backtrackHysteresisM) {
-    // 소폭 후퇴(GPS 노이즈)는 무시 — 안내 되감기 방지
     progressM = prev;
   }
 
-  // 초반 노드(n01·n02)는 스킵 금지 — n02 cum을 넘기기 전에는 그 이상으로 점프 불가
-  // + 다음 초반 경계까지만 한 칸씩 허용
   if (inEarlyZone && steps.length > 1) {
     progressM = Math.min(progressM, earlyEndCum);
     for (let i = 1; i <= earlyLastIdx; i += 1) {
@@ -420,6 +434,7 @@ export function gateProgressFromStart({
     startEngaged: true,
     lockedAtStart: false,
     distToStartM,
+    distToRouteM,
   };
 }
 
