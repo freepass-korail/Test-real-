@@ -135,6 +135,7 @@ function S5_Navigation() {
   const isTracking = useFlowStore((s) => s.isTracking);
   const overshoot = useFlowStore((s) => s.overshoot);
   const altRoute = useFlowStore((s) => s.altRoute);
+  const routeLoading = useFlowStore((s) => s.routeLoading);
   const guideStateMap = useFlowStore((s) => s.guideStateMap);
   const playGuideState = useFlowStore((s) => s.playGuideState);
 
@@ -172,6 +173,7 @@ function S5_Navigation() {
 
   const guideMessage = useMemo(() => {
     if (altRoute) {
+      if (routeLoading) return '경로를 다시 찾는 중이에요.';
       return getGuideStateScreenText(guideStateMap, GUIDE_STATE.OFF_ROUTE);
     }
     if (overshoot) {
@@ -201,6 +203,7 @@ function S5_Navigation() {
     distanceM,
     guideStateMap,
     overshoot,
+    routeLoading,
     routeSteps,
   ]);
 

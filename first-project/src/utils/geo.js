@@ -494,6 +494,32 @@ export function getDistanceToRouteMeters(pos, steps = []) {
 }
 
 /**
+ * 현재 위치에 가장 가까운 경로 노드 (재탐색 fromNode 후보)
+ * @returns {{ node: object|null, index: number, distM: number }}
+ */
+export function findNearestNode(pos, steps = []) {
+  if (!pos || !steps.length) {
+    return { node: null, index: -1, distM: Infinity };
+  }
+  let bestIdx = -1;
+  let bestDist = Infinity;
+  for (let i = 0; i < steps.length; i += 1) {
+    const step = steps[i];
+    if (step?.lat == null || step?.lng == null) continue;
+    const d = getDistanceMeters(pos.lat, pos.lng, step.lat, step.lng);
+    if (d < bestDist) {
+      bestDist = d;
+      bestIdx = i;
+    }
+  }
+  return {
+    node: bestIdx >= 0 ? steps[bestIdx] : null,
+    index: bestIdx,
+    distM: bestDist,
+  };
+}
+
+/**
  * 세그먼트 AB 위 투영점의 거리(m)와 t(0~1)
  * @returns {{ distanceM: number, t: number }}
  */

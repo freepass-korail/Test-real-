@@ -13,6 +13,15 @@ describe('getDeviceHeading', () => {
     expect(result.heading).toBeCloseTo(90, 5);
   });
 
+  it('does not subtract screen orientation from webkitCompassHeading', () => {
+    // webkit는 이미 화면 위쪽 기준 — 추가 보정하면 iOS에서 화살표가 틀어짐
+    const result = getDeviceHeading({
+      webkitCompassHeading: 45,
+      webkitCompassAccuracy: 10,
+    });
+    expect(result.heading).toBeCloseTo(45, 5);
+  });
+
   it('rejects webkit heading when accuracy is negative', () => {
     expect(
       getDeviceHeading({

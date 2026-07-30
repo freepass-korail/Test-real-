@@ -25,6 +25,8 @@ import {
 import useDeviceOrientation from './useDeviceOrientation';
 import useGeolocation from './useGeolocation';
 import { GUIDE_STATE } from '../utils/guideStates';
+import { fetchReroute } from '../api/reroute';
+import { applyGuideSteps } from '../api/bootstrapGuide';
 
 /** panTo 쓰로틀 (ms) */
 const PAN_THROTTLE_MS = 2000;
@@ -32,6 +34,8 @@ const PAN_THROTTLE_MS = 2000;
 const GPS_COURSE_MIN_SPEED_MPS = 0.6;
 /** 최종 노드 근처에서만 반대방향을 '지나침'으로 해석 */
 const WRONG_DIR_OVERSHOOT_NEAR_M = 30;
+/** 이탈 재탐색 최소 간격 (ms) — 연속 호출 방지 */
+const REROUTE_COOLDOWN_MS = 8000;
 
 function useNavigationTracking({ enabled = true, onArrived } = {}) {
   const hasArrivedRef = useRef(false);
@@ -52,6 +56,9 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
   /** 나침반(또는 GPS course) heading 확보 */
   const headingReadyRef = useRef(false);
   const compassHeardRef = useRef(false);
+  /** 경로 이탈 재탐색 중/쿨다운 */
+  const reroutingRef = useRef(false);
+  const lastRerouteAtRef = useRef(0);
   const ARRIVAL_CONFIRM_HITS = 2;
   const WRONG_DIR_CONFIRM_HITS = 2;
 
@@ -62,11 +69,116 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
   const setNavigation = useFlowStore((s) => s.setNavigation);
   const setGeoError = useFlowStore((s) => s.setGeoError);
   const setStep = useFlowStore((s) => s.setStep);
+  const setRoute = useFlowStore((s) => s.setRoute);
+  const setReservation = useFlowStore((s) => s.setReservation);
+  const setRouteLoading = useFlowStore((s) => s.setRouteLoading);
   const syncFromProgress = useFlowStore((s) => s.syncFromProgress);
 
   const stopTrackingRef = useRef(() => {});
   const onArrivedRef = useRef(onArrived);
   onArrivedRef.current = onArrived;
+
+  const resetNavAfterReroute = useCallback(() => {
+    startEngagedRef.current = false;
+    progressMRef.current = 0;
+    lastPassRef.current = -1;
+    lastNavSigRef.current = '';
+    offRouteHitsRef.current = 0;
+    onRouteHitsRef.current = 0;
+    wrongDirHitsRef.current = 0;
+    arrivalHitsRef.current = 0;
+    minDistanceRef.current = Infinity;
+    lastNodeOvershootRef.current = false;
+    prevRawDistanceRef.current = null;
+  }, []);
+
+  const requestReroute = useCallback(
+    async (pos) => {
+      if (reroutingRef.current) return;
+      const now = performance.now();
+      if (now - lastRerouteAtRef.current < REROUTE_COOLDOWN_MS) {
+        console.log('[NAV] reroute skipped (cooldown)');
+        return;
+      }
+      reroutingRef.current = true;
+      lastRerouteAtRef.current = now;
+      setRouteLoading(true);
+      setNavigation({ altRoute: true, routeLoading: true });
+
+      try {
+        const state = useFlowStore.getState();
+        const ticketId = Number(state.ticketInfo?.ticketId) || null;
+        const result = await fetchReroute({
+          pos,
+          routeSteps: state.routeSteps,
+          toNode: state.toNode,
+          ticketId,
+          reservationId: state.reservationId,
+        });
+
+        console.log(
+          `[NAV] reroute ← ${result.fromNodeId}` +
+            ` (nearest ${result.nearest.distM.toFixed(1)}m) kind=${result.kind}`,
+        );
+
+        if (result.kind === 'at_destination') {
+          setNavigation({ altRoute: false, routeLoading: false });
+          state.clearGuideStateAnnounce?.();
+          return;
+        }
+
+        if (!result.route?.steps?.length) {
+          throw new Error('재탐색 경로가 비어 있습니다.');
+        }
+
+        const ticket = result.guide?.ticket ?? state.ticketInfo;
+        const reservationId =
+          result.guide?.reservationId ?? state.reservationId;
+        setReservation(
+          reservationId,
+          ticket,
+          result.fromNodeId,
+          result.toNode ?? state.toNode,
+        );
+        setRoute(result.route);
+        if (result.stepsRes) {
+          applyGuideSteps(result.stepsRes);
+        }
+
+        resetNavAfterReroute();
+        // setRoute가 headingReady를 끄므로 나침반은 유지
+        setNavigation({
+          altRoute: false,
+          routeLoading: false,
+          overshoot: false,
+          headingReady: headingReadyRef.current,
+          heading: useFlowStore.getState().heading,
+        });
+        useFlowStore.getState().clearGuideStateAnnounce?.();
+        console.log(
+          '[NAV] reroute applied',
+          result.route.steps.map((s) => s.nodeId).join('→'),
+        );
+      } catch (err) {
+        console.error('[NAV] reroute failed', err);
+        // 실패 시 빨간 이탈 화면 유지
+        setNavigation({ altRoute: true, routeLoading: false });
+      } finally {
+        reroutingRef.current = false;
+        setRouteLoading(false);
+      }
+    },
+    [
+      resetNavAfterReroute,
+      setNavigation,
+      setReservation,
+      setRoute,
+      setRouteLoading,
+    ],
+  );
+
+  const requestRerouteRef = useRef(requestReroute);
+  requestRerouteRef.current = requestReroute;
 
   const handlePositionUpdate = useCallback(
     (pos, geoPos) => {
@@ -85,20 +197,22 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
 
       const gpsHeading = geoPos?.coords?.heading;
       const gpsSpeed = geoPos?.coords?.speed;
+      // 나침반이 있으면 그걸 우선. GPS course는 실내에서 자주 틀어져 iOS 화살표를 망가뜨림.
       const useGpsCourse =
+        !compassHeardRef.current &&
         gpsHeading != null &&
         !Number.isNaN(Number(gpsHeading)) &&
         gpsSpeed != null &&
         Number(gpsSpeed) >= GPS_COURSE_MIN_SPEED_MPS;
 
-      let heading = compassHeading;
+      let heading = null;
       let headingReady = storeHeadingReady || headingReadyRef.current;
-      if (useGpsCourse) {
-        heading = normalizeAngle(Number(gpsHeading));
+      if (compassHeardRef.current && compassHeading != null && !Number.isNaN(Number(compassHeading))) {
+        heading = Number(compassHeading);
         headingReady = true;
         headingReadyRef.current = true;
-      } else if (compassHeardRef.current && compassHeading != null) {
-        heading = compassHeading;
+      } else if (useGpsCourse) {
+        heading = normalizeAngle(Number(gpsHeading));
         headingReady = true;
         headingReadyRef.current = true;
       }
@@ -252,10 +366,11 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
         ? dest
         : (getArrowAimPoint(pos, steps, targetIndex) ?? dest);
       const bearing = getBearing(pos.lat, pos.lng, aimPoint.lat, aimPoint.lng);
-      // 단일 필터: raw 각도를 store에 넣고, 화면만 useFollowAngle로 추종
-      const destinationAngle = headingReady
-        ? getArrowRotation(bearing, heading ?? 0)
-        : 0;
+      // heading 미확보 시 destinationAngle을 0으로 덮지 않음 (GPS 틱이 화살표를 북쪽으로 리셋하던 버그)
+      const destinationAngle =
+        headingReady && heading != null
+          ? getArrowRotation(bearing, heading)
+          : null;
 
       if (isLastStep && rawDistanceM < minDistanceRef.current) {
         minDistanceRef.current = rawDistanceM;
@@ -269,6 +384,7 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
 
       const facingOpposite =
         headingReady &&
+        destinationAngle != null &&
         Math.abs(destinationAngle) >= WRONG_DIRECTION_ANGLE_DEG;
       const prevRaw = prevRawDistanceRef.current;
       const movingAway =
@@ -318,26 +434,30 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
         nextAltRoute = false;
       }
 
-      const angleShown = Math.round(destinationAngle);
+      const angleShown =
+        destinationAngle == null ? useFlowStore.getState().destinationAngle ?? 0 : Math.round(destinationAngle);
       const navSig = `${distShown}|${angleShown}|${isOvershoot}|${nextAltRoute}|${targetIndex}|${headingReady}`;
       if (navSig !== lastNavSigRef.current) {
         lastNavSigRef.current = navSig;
-        setNavigation({
+        const navPatch = {
           position: pos,
           distanceM: distShown,
           progressM,
           bearing,
-          heading: heading ?? 0,
           headingReady,
-          destinationAngle: angleShown,
           overshoot: isOvershoot,
           altRoute: nextAltRoute,
-        });
+        };
+        if (heading != null) navPatch.heading = heading;
+        if (destinationAngle != null) navPatch.destinationAngle = angleShown;
+        setNavigation(navPatch);
       }
 
       const { playGuideState, clearGuideStateAnnounce } = useFlowStore.getState();
       if (nextAltRoute && !prevAltRoute) {
         playGuideState(GUIDE_STATE.OFF_ROUTE);
+        // 이탈 확정 → 현재 위치 기준 경로 재탐색
+        requestRerouteRef.current(pos);
       } else if (isOvershoot && !prevOvershoot) {
         playGuideState(GUIDE_STATE.DESTINATION_PASSED);
       } else if (!nextAltRoute && !isOvershoot && (prevAltRoute || prevOvershoot)) {
@@ -378,7 +498,6 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
       headingReadyRef.current = true;
       const {
         position,
-        bearing: storedBearing,
         destination: dest,
         overshoot,
         routeSteps,
@@ -388,25 +507,23 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
 
       setNavigation({ heading, headingReady: true });
 
-      if (!dest?.lat || !dest?.lng) return;
+      // localization 전에는 출발 노드를 겨냥 (store destination은 아직 다음 노드일 수 있음)
+      const locked = !startEngagedRef.current;
+      const aim = locked && routeSteps?.[0]?.lat != null ? routeSteps[0] : dest;
+      if (!aim?.lat || !aim?.lng || !position?.lat || !position?.lng) return;
 
-      const bearing =
-        storedBearing ??
-        (position ? getBearing(position.lat, position.lng, dest.lat, dest.lng) : null);
-      const destinationAngle =
-        bearing != null ? getArrowRotation(bearing, heading) : 0;
+      const bearing = getBearing(position.lat, position.lng, aim.lat, aim.lng);
+      const destinationAngle = getArrowRotation(bearing, heading);
 
-      if (bearing != null) {
-        if (Math.abs(destinationAngle) >= WRONG_DIRECTION_ANGLE_DEG) {
-          wrongDirHitsRef.current += 1;
-        } else {
-          wrongDirHitsRef.current = Math.max(0, wrongDirHitsRef.current - 1);
-        }
+      if (Math.abs(destinationAngle) >= WRONG_DIRECTION_ANGLE_DEG) {
+        wrongDirHitsRef.current += 1;
+      } else {
+        wrongDirHitsRef.current = Math.max(0, wrongDirHitsRef.current - 1);
       }
 
       const isWrongDirection = wrongDirHitsRef.current >= WRONG_DIR_CONFIRM_HITS;
       const lastIdx = (routeSteps?.length ?? 0) - 1;
-      const onFinalStep = lastIdx >= 0 && currentStepIndex >= lastIdx;
+      const onFinalStep = !locked && lastIdx >= 0 && currentStepIndex >= lastIdx;
       const nearLastByUiRemain = distanceM != null && Number(distanceM) <= WRONG_DIR_OVERSHOOT_NEAR_M;
       const canTreatWrongDirAsOvershoot =
         onFinalStep &&
@@ -453,6 +570,8 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
     progressMRef.current = 0;
     headingReadyRef.current = false;
     compassHeardRef.current = false;
+    reroutingRef.current = false;
+    lastRerouteAtRef.current = 0;
     const steps = useFlowStore.getState().routeSteps || [];
     const firstTarget = steps.length > 1 ? 1 : 0;
     const first = steps[0];

@@ -9,6 +9,7 @@ import {
   getDistanceMeters,
   getProgressAlongRouteM,
   getRemainingToTargetM,
+  findNearestNode,
   getStepArrivalRadiusM,
   gateProgressFromStart,
   GPS_MAX_ACCURACY_M,
@@ -349,6 +350,22 @@ describe('gateProgressFromStart', () => {
       backtrackHysteresisM: 12,
     });
     expect(gated.progressM).toBe(10);
+  });
+});
+
+describe('findNearestNode', () => {
+  const steps = ensureStepDistances([
+    node('n01', 0),
+    node('n02', 20),
+    node('n03', 40),
+  ]);
+
+  it('returns the closest route node to the GPS position', () => {
+    const pos = { lat: node('p', 19).lat, lng: node('p', 19).lng };
+    const nearest = findNearestNode(pos, steps);
+    expect(nearest.node?.nodeId).toBe('n02');
+    expect(nearest.index).toBe(1);
+    expect(nearest.distM).toBeLessThan(5);
   });
 });
 

@@ -33,7 +33,7 @@ export function getUserIdFromUrl(search = window.location.search) {
   return id > 0 ? id : null;
 }
 
-function applyGuideSteps(stepsRes) {
+export function applyGuideSteps(stepsRes) {
   const {
     setAudioMap,
     setScreenTextMap,

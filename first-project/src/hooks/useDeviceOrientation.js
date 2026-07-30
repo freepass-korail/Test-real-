@@ -25,7 +25,8 @@ function getScreenOrientationDeg() {
 export function getDeviceHeading(event) {
   if (!event) return null;
 
-  // 1) iOS — 기울기 보정된 방위 + accuracy 검증
+  // 1) iOS — webkitCompassHeading은 이미 "화면 위쪽" 기준 방위(기울기·오리엔테이션 반영됨)
+  //    screen.orientation을 또 빼면 가로/일부 iOS에서 화살표가 90°·반대로 틀어짐
   if (event.webkitCompassHeading != null && !Number.isNaN(Number(event.webkitCompassHeading))) {
     // webkitCompassAccuracy < 0 → 헤딩 무효 (Apple)
     if (
@@ -36,9 +37,7 @@ export function getDeviceHeading(event) {
       return null;
     }
     return {
-      heading: normalizeAngle(
-        Number(event.webkitCompassHeading) - getScreenOrientationDeg(),
-      ),
+      heading: normalizeAngle(Number(event.webkitCompassHeading)),
       source: 'webkit',
     };
   }
