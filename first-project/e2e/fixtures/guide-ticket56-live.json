@@ -1,0 +1,101 @@
+{
+  "_fetchedAt": "2026-07-30T05:22:06.752Z",
+  "fromNode": "n01",
+  "platformNode": "n13",
+  "totalDistanceM": 151.122,
+  "route": [
+    {
+      "nodeId": "n01",
+      "name": "3층 입구",
+      "lat": 37.1279929,
+      "lng": 128.2056833,
+      "guideNote": null
+    },
+    {
+      "nodeId": "n02",
+      "name": "갈림길",
+      "lat": 37.1280816,
+      "lng": 128.2056662,
+      "guideNote": null
+    },
+    {
+      "nodeId": "n03",
+      "name": "1번 승차홈 앞 갈림길",
+      "lat": 37.127647,
+      "lng": 128.2061007,
+      "guideNote": null
+    },
+    {
+      "nodeId": "n06",
+      "name": "2,3 승강장 앞 갈림길",
+      "lat": 37.1275403,
+      "lng": 128.2057265,
+      "guideNote": null
+    },
+    {
+      "nodeId": "n09",
+      "name": "4,5번 승강장 앞 갈림길",
+      "lat": 37.1273992,
+      "lng": 128.2056682,
+      "guideNote": null
+    },
+    {
+      "nodeId": "n10",
+      "name": "4,5번 승강장 앞 에스컬레이터",
+      "lat": 37.1272647,
+      "lng": 128.2056759,
+      "guideNote": "에스컬레이터를 타고 내려가세요"
+    },
+    {
+      "nodeId": "n13",
+      "name": "4,5 높은 승강장 방향",
+      "lat": 37.127265,
+      "lng": 128.2060551,
+      "guideNote": null
+    }
+  ],
+  "directions": [
+    {
+      "nodeId": "n01",
+      "distanceToNextM": 9,
+      "cumulativeDistanceM": 0,
+      "text": "3층 입구에서 출발해 9m 직진"
+    },
+    {
+      "nodeId": "n02",
+      "distanceToNextM": 62,
+      "cumulativeDistanceM": 9,
+      "text": "1번 승차홈 앞 갈림길 방향으로 62m 직진"
+    },
+    {
+      "nodeId": "n03",
+      "distanceToNextM": 25.508,
+      "cumulativeDistanceM": 71,
+      "text": "2,3 승강장 앞 갈림길 방향으로 26m 직진"
+    },
+    {
+      "nodeId": "n06",
+      "distanceToNextM": 23.189,
+      "cumulativeDistanceM": 96.508,
+      "text": "4,5번 승강장 앞 갈림길 방향으로 23m 직진"
+    },
+    {
+      "nodeId": "n09",
+      "distanceToNextM": 4.375,
+      "cumulativeDistanceM": 119.697,
+      "text": "4,5번 승강장 앞 갈림길에서 좌측 방향 후 4m 이동"
+    },
+    {
+      "nodeId": "n10",
+      "distanceToNextM": 27.05,
+      "cumulativeDistanceM": 124.072,
+      "text": "4,5번 승강장 앞 에스컬레이터에서 좌회전 후 27m 이동"
+    },
+    {
+      "nodeId": "n13",
+      "distanceToNextM": 0,
+      "cumulativeDistanceM": 151.122,
+      "text": "4,5 높은 승강장 방향 도착"
+    }
+  ]
+}

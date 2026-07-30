@@ -11,6 +11,7 @@ import {
   requestOrientationPermission,
 } from '../hooks/useDeviceOrientation';
 import { requestMotionPermission } from '../hooks/useStationary';
+import { STATION_START } from '../constants/station';
 
 const OverlayRoot = styled.div`
   position: relative;
@@ -45,9 +46,17 @@ function S2_Permission() {
   const [errorMessage, setErrorMessage] = useState(null);
   const [systemPromptOpen, setSystemPromptOpen] = useState(false);
 
-  const handlePermissionSuccess = () => {
+  const handlePermissionSuccess = (coords) => {
+    const lat = Number(coords?.latitude);
+    const lng = Number(coords?.longitude);
+    const hasFix = Number.isFinite(lat) && Number.isFinite(lng);
+    const center = hasFix ? { lat, lng } : STATION_START;
+
+    useFlowStore.getState().setNavigation({
+      position: { lat: center.lat, lng: center.lng },
+    });
     if (mapInstance) {
-      mapInstance.panTo({ lat: 37.1282075, lng: 128.2052678 });
+      mapInstance.panTo({ lat: center.lat, lng: center.lng });
     }
     setIsRequesting(false);
     setOrientationGranted(!isIOS);
@@ -61,7 +70,7 @@ function S2_Permission() {
     setErrorMessage(null);
 
     requestGeolocationPermission()
-      .then(() => handlePermissionSuccess())
+      .then((pos) => handlePermissionSuccess(pos?.coords))
       .catch((error) => {
         console.error('위치 권한 실패', error);
         setIsRequesting(false);
@@ -84,7 +93,7 @@ function S2_Permission() {
         // 방향 센서 허용 후 자동으로 위치 권한도 연달아 요청
         return requestGeolocationPermission();
       })
-      .then(() => handlePermissionSuccess())
+      .then((pos) => handlePermissionSuccess(pos?.coords))
       .catch((error) => {
         console.error('권한 요청 실패', error);
         setIsRequesting(false);
@@ -105,7 +114,7 @@ function S2_Permission() {
       const orientError = orientResult.status === 'rejected' ? orientResult.reason : null;
 
       if (!geoError && !orientError) {
-        handlePermissionSuccess();
+        handlePermissionSuccess(geoResult.value?.coords);
         return;
       }
 

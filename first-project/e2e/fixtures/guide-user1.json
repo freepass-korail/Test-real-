@@ -22,13 +22,55 @@
   "platformNode": "n14",
   "routeFound": true,
   "route": [
-    { "nodeId": "n01", "name": "3층 입구", "lat": 37.1279096, "lng": 128.2056971, "guideNote": null },
-    { "nodeId": "n02", "name": "콘코스 갈림길", "lat": 37.1278326, "lng": 128.2056689, "guideNote": null },
-    { "nodeId": "n03", "name": "1번 플랫폼 앞 갈림길", "lat": 37.1277891, "lng": 128.2058085, "guideNote": null },
-    { "nodeId": "n06", "name": "2,3 플랫폼 앞 갈림길", "lat": 37.1276159, "lng": 128.2057095, "guideNote": null },
-    { "nodeId": "n09", "name": "4,5번 플랫폼 앞 갈림길", "lat": 37.1274347, "lng": 128.2056022, "guideNote": null },
-    { "nodeId": "n10", "name": "4,5번 플랫폼 우측 승강장", "lat": 37.1274097, "lng": 128.2056638, "guideNote": "에스컬레이터를 타고 내려가세요" },
-    { "nodeId": "n14", "name": "4,5 저상홈", "lat": 37.126961, "lng": 128.2067474, "guideNote": null }
+    {
+      "nodeId": "n01",
+      "name": "3층 입구",
+      "lat": 37.1279929,
+      "lng": 128.2056833,
+      "guideNote": null
+    },
+    {
+      "nodeId": "n02",
+      "name": "갈림길",
+      "lat": 37.1280816,
+      "lng": 128.2056662,
+      "guideNote": null
+    },
+    {
+      "nodeId": "n03",
+      "name": "1번 승차홈 앞 갈림길",
+      "lat": 37.127647,
+      "lng": 128.2061007,
+      "guideNote": null
+    },
+    {
+      "nodeId": "n06",
+      "name": "2,3 승강장 앞 갈림길",
+      "lat": 37.1275403,
+      "lng": 128.2057265,
+      "guideNote": null
+    },
+    {
+      "nodeId": "n09",
+      "name": "4,5번 승강장 앞 갈림길",
+      "lat": 37.1273992,
+      "lng": 128.2056682,
+      "guideNote": null
+    },
+    {
+      "nodeId": "n10",
+      "name": "4,5번 승강장 앞 에스컬레이터",
+      "lat": 37.1272647,
+      "lng": 128.2056759,
+      "guideNote": "에스컬레이터를 타고 내려가세요"
+    },
+    {
+      "nodeId": "n14",
+      "name": "4,5 저상홈",
+      "lat": 37.126961,
+      "lng": 128.2067474,
+      "guideNote": null
+    }
   ],
   "directions": [
     {
