@@ -7,6 +7,7 @@ import {
   getArrowRotation,
   getBearing,
   getDistanceMeters,
+  getProgressAlongRouteM,
   getStepArrivalRadiusM,
   gateProgressFromStart,
   GPS_MAX_ACCURACY_M,
@@ -308,6 +309,52 @@ describe('gateProgressFromStart', () => {
     });
     expect(gated.progressM).toBe(65);
     expect(gated.lockedAtStart).toBe(false);
+  });
+
+  it('ignores small GPS backtracks (hysteresis) so guide does not rewind', () => {
+    const pos = { lat: node('p', 30).lat, lng: node('p', 30).lng };
+    const gated = gateProgressFromStart({
+      pos,
+      steps,
+      rawProgressM: 25, // 8m만 뒤로
+      prevProgressM: 33,
+      startEngaged: true,
+      backtrackHysteresisM: 12,
+    });
+    expect(gated.progressM).toBe(33);
+  });
+
+  it('allows a real backtrack once drop exceeds hysteresis', () => {
+    const pos = { lat: node('p', 10).lat, lng: node('p', 10).lng };
+    const gated = gateProgressFromStart({
+      pos,
+      steps,
+      rawProgressM: 10,
+      prevProgressM: 33,
+      startEngaged: true,
+      backtrackHysteresisM: 12,
+    });
+    expect(gated.progressM).toBe(10);
+  });
+});
+
+describe('getProgressAlongRouteM minSnapCumM', () => {
+  const steps = ensureStepDistances([
+    node('n01', 0),
+    node('n02', 20),
+    node('n03', 40),
+    node('n04', 80),
+  ]);
+
+  it('does not re-snap to n01 after progress has passed early nodes', () => {
+    // GPS는 n01 위인데, 이미 n02 cum(20) 이상 진행한 상태
+    const pos = { lat: steps[0].lat, lng: steps[0].lng };
+    const withoutFloor = getProgressAlongRouteM(pos, steps);
+    expect(withoutFloor).toBeCloseTo(0, 5);
+
+    const withFloor = getProgressAlongRouteM(pos, steps, { minSnapCumM: 20 });
+    // n01 스냅/투영으로 0이 되지 않고 earlyEndCum(20)에서 하한
+    expect(withFloor).toBeCloseTo(20, 5);
   });
 });
 

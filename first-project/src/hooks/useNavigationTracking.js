@@ -14,6 +14,7 @@ import {
   OFF_ROUTE_HIT_COUNT,
   OFF_ROUTE_THRESHOLD_M,
   gateProgressFromStart,
+  EARLY_NODE_COUNT,
   OVERSHOOT_THRESHOLD_M,
   resolveStepIndexFromProgress,
   shouldArriveByRemain,
@@ -101,7 +102,19 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
 
       // raw GPS 기준 — 거리·통과·음성 모두 즉시 (EMA/maxStep 없음)
       // 단, 출발 노드 근접 전에는 중간 경로 투영으로 진행도를 올리지 않음
-      const rawProgressM = getProgressAlongRouteM(pos, steps);
+      // n02 통과 후에는 n01 등 초반 cum 아래로 스냅/투영되지 않음 (출발 안내 되감기 방지)
+      const earlyLastIdx = Math.min(
+        Math.max(0, steps.length - 1),
+        Math.max(0, EARLY_NODE_COUNT - 1),
+      );
+      const earlyEndCum = Math.max(
+        0,
+        Number(steps[earlyLastIdx]?.cumulativeDistanceM) || 0,
+      );
+      const pastEarly = progressMRef.current >= earlyEndCum && earlyEndCum > 0;
+      const rawProgressM = getProgressAlongRouteM(pos, steps, {
+        minSnapCumM: pastEarly ? earlyEndCum : 0,
+      });
       const gated = gateProgressFromStart({
         pos,
         steps,

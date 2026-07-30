@@ -336,7 +336,14 @@ export const EARLY_PROGRESS_JUMP_M = 12;
 export const EARLY_NODE_COUNT = 2;
 
 /**
- * 출발 노드 근접 전 진행도 잠금 + 과도한 전방 점프 제한 + 초반 노드 스킵 방지.
+ * GPS 출렁임으로 progress가 살짝 줄어도 안내가 되감기지 않게.
+ * 이 거리(m) 이상 뒤로 밀릴 때만 progress 감소를 허용.
+ */
+export const PROGRESS_BACKTRACK_HYSTERESIS_M = 12;
+
+/**
+ * 출발 노드 근접 전 진행도 잠금 + 과도한 전방 점프 제한 + 초반 노드 스킵 방지
+ * + 뒤로가기 히스테리시스.
  * @returns {{
  *   progressM: number,
  *   startEngaged: boolean,
@@ -354,6 +361,7 @@ export function gateProgressFromStart({
   maxJumpM = MAX_PROGRESS_JUMP_M,
   earlyJumpM = EARLY_PROGRESS_JUMP_M,
   earlyNodeCount = EARLY_NODE_COUNT,
+  backtrackHysteresisM = PROGRESS_BACKTRACK_HYSTERESIS_M,
 }) {
   const start = steps[0];
   if (!pos || !start?.lat || !start?.lng) {
@@ -386,8 +394,14 @@ export function gateProgressFromStart({
   const inEarlyZone = prev < earlyEndCum;
   const jumpLimit = inEarlyZone ? Math.min(maxJumpM, earlyJumpM) : maxJumpM;
 
-  // 뒤로 가는 건 허용(되돌아감). 앞으로는 한 틱에 jumpLimit까지만.
-  let progressM = raw > prev + jumpLimit ? prev + jumpLimit : raw;
+  let progressM = raw;
+  if (raw > prev + jumpLimit) {
+    // 전방 점프 상한
+    progressM = prev + jumpLimit;
+  } else if (raw < prev && prev - raw < backtrackHysteresisM) {
+    // 소폭 후퇴(GPS 노이즈)는 무시 — 안내 되감기 방지
+    progressM = prev;
+  }
 
   // 초반 노드(n01·n02)는 스킵 금지 — n02 cum을 넘기기 전에는 그 이상으로 점프 불가
   // + 다음 초반 경계까지만 한 칸씩 허용
@@ -567,8 +581,9 @@ export const ROUTE_NODE_SNAP_M = 3;
 /**
  * 초반 노드(n01·n02)는 실내 GPS 오차(10~25m)를 고려해 스냅을 넓힘.
  * 기본 3m면 거의 안 잡혀서 통과 안내가 스킵됨.
+ * (너무 크면 n02 통과 후 n01로 재스냅 → 안내 되감기. minSnapCumM으로 보완)
  */
-export const EARLY_NODE_SNAP_M = 8;
+export const EARLY_NODE_SNAP_M = 6;
 
 /**
  * 최종 목적지(마지막 노드) 평면 근접 시 s를 끝까지 스냅.
@@ -587,13 +602,17 @@ function nodeSnapRadiusM(index) {
 /**
  * GPS를 경로에 투영한 진행거리 s(m).
  * 남은거리 = totalDistanceM − s
+ * @param {{ minSnapCumM?: number }} [options]
+ *   minSnapCumM — 이 cum보다 뒤(작은 cum) 노드로는 스냅하지 않음
+ *   (n02 통과 후 GPS가 n01 근처로 튀어도 출발 노드로 재스냅되지 않게)
  */
-export function getProgressAlongRouteM(pos, steps = []) {
+export function getProgressAlongRouteM(pos, steps = [], { minSnapCumM = 0 } = {}) {
   if (!pos || !steps.length) return 0;
   ensureStepDistances(steps);
 
   const lastIdx = steps.length - 1;
   const lastCum = Math.max(0, Number(steps[lastIdx].cumulativeDistanceM) || 0);
+  const snapFloor = Math.max(0, Number(minSnapCumM) || 0);
 
   if (steps.length === 1) {
     return lastCum;
@@ -601,9 +620,12 @@ export function getProgressAlongRouteM(pos, steps = []) {
 
   // 1) 가까운 중간 노드면 그 노드 cum (최종 노드 제외 — 아래에서 도착권일 때만 스냅)
   //    초반 노드는 EARLY_NODE_SNAP_M으로 더 넓게 받음
+  //    이미 지나온 cum보다 뒤 노드로는 스냅 금지
   let snapIdx = -1;
   let snapDist = Infinity;
   for (let i = 0; i < lastIdx; i += 1) {
+    const cum = Math.max(0, Number(steps[i].cumulativeDistanceM) || 0);
+    if (cum + 1e-6 < snapFloor) continue;
     const radius = nodeSnapRadiusM(i);
     const d = getDistanceMeters(pos.lat, pos.lng, steps[i].lat, steps[i].lng);
     if (d > radius + 1e-6) continue;
@@ -613,7 +635,7 @@ export function getProgressAlongRouteM(pos, steps = []) {
     }
   }
   if (snapIdx >= 0) {
-    return Math.max(0, Number(steps[snapIdx].cumulativeDistanceM) || 0);
+    return Math.max(snapFloor, Number(steps[snapIdx].cumulativeDistanceM) || 0);
   }
 
   // 2) 폴리라인 투영
@@ -635,6 +657,8 @@ export function getProgressAlongRouteM(pos, steps = []) {
   const projected = Math.max(0, startCum + clampedT * toNext);
   const remainToEnd = Math.max(0, lastCum - projected);
 
+  const finish = (value) => Math.max(snapFloor, Math.max(0, value));
+
   // 0') 최종 노드 평면 근접 스냅 — BE remain이 이미 도착권(≤20m)일 때만
   const distLast = getDistanceMeters(
     pos.lat,
@@ -643,22 +667,22 @@ export function getProgressAlongRouteM(pos, steps = []) {
     steps[lastIdx].lng,
   );
   if (distLast <= ROUTE_FINAL_NODE_SNAP_M && remainToEnd <= ARRIVAL_RADIUS_M) {
-    return lastCum;
+    return finish(lastCum);
   }
 
-  if (clampedT <= ROUTE_SEGMENT_END_SNAP_T) return Math.max(0, startCum);
+  if (clampedT <= ROUTE_SEGMENT_END_SNAP_T) return finish(startCum);
 
   // 마지막 구간 끝 스냅도 remain이 도착권일 때만 (40→0 점프 방지)
   if (clampedT >= 1 - ROUTE_SEGMENT_END_SNAP_T) {
     const remainOnSeg = (1 - clampedT) * toNext;
     const onLastSeg = segmentIndex >= lastIdx - 1;
     if (onLastSeg && remainOnSeg > ARRIVAL_RADIUS_M) {
-      return projected;
+      return finish(projected);
     }
-    return Math.max(0, endCum);
+    return finish(endCum);
   }
 
-  return projected;
+  return finish(projected);
 }
 
 /**
