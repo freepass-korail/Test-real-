@@ -9,7 +9,7 @@ import useDepartureUrgent from '../hooks/useDepartureUrgent';
 import useDepartureExpired from '../hooks/useDepartureExpired';
 import { DEPARTURE_URGENT_COLOR } from '../utils/time';
 import S5NavigationArrow from './common/S5NavigationArrow';
-import { ARRIVAL_RADIUS_M, formatGuideDistance, getCompassDotPosition, getNavigationInstruction } from '../utils/geo';
+import { ARRIVAL_RADIUS_M, formatGuideDistance, getCompassDotPosition, getNavigationInstruction, LOW_ACCURACY_M } from '../utils/geo';
 import { GUIDE_STATE, getGuideStateScreenText } from '../utils/guideStates';
 import { typography } from '../styles/theme';
 import { abs, figma, figmaText } from '../styles/figmaLayout';
@@ -138,6 +138,7 @@ function S5_Navigation() {
   const routeLoading = useFlowStore((s) => s.routeLoading);
   const guideStateMap = useFlowStore((s) => s.guideStateMap);
   const playGuideState = useFlowStore((s) => s.playGuideState);
+  const accuracyM = useFlowStore((s) => s.accuracyM);
 
   const playCurrentStepAudio = useFlowStore((s) => s.playCurrentStepAudio);
 
@@ -236,7 +237,12 @@ function S5_Navigation() {
   );
 
   const compassOpacity =
-    isTracking && (distanceM == null || !headingReady) ? 0.45 : 1;
+    isTracking &&
+    (distanceM == null ||
+      !headingReady ||
+      (accuracyM != null && Number(accuracyM) > LOW_ACCURACY_M))
+      ? 0.45
+      : 1;
 
   const handleClose = () => {
     stopTracking();

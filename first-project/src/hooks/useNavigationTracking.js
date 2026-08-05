@@ -2,13 +2,13 @@ import { useCallback, useEffect, useRef } from 'react';
 import useFlowStore from '../store/useFlowStore';
 import {
   ARRIVAL_RADIUS_M,
-  getArrowAimPoint,
   getArrowRotation,
-  getBearing,
   getDistanceMeters,
   getDistanceToRouteMeters,
+  getGuidanceBearing,
   getProgressAlongRouteM,
   getRemainingToTargetM,
+  LOW_ACCURACY_M,
   normalizeAngle,
   OFF_ROUTE_CLEAR_COUNT,
   OFF_ROUTE_HIT_COUNT,
@@ -59,6 +59,8 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
   /** 경로 이탈 재탐색 중/쿨다운 */
   const reroutingRef = useRef(false);
   const lastRerouteAtRef = useRef(0);
+  /** 화살표 방위 소스(segment/precise/blend) — 전환 시에만 로그 */
+  const lastBearingModeRef = useRef('');
   const ARRIVAL_CONFIRM_HITS = 2;
   const WRONG_DIR_CONFIRM_HITS = 2;
 
@@ -362,13 +364,32 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
           ? distToLastNode
           : getDistanceMeters(pos.lat, pos.lng, dest.lat, dest.lng);
 
-      const aimPoint = lockedAtStart || isLastStep
-        ? dest
-        : (getArrowAimPoint(pos, steps, targetIndex) ?? dest);
-      const bearing = getBearing(pos.lat, pos.lng, aimPoint.lat, aimPoint.lng);
+      const accuracyM =
+        pos.accuracy != null && Number.isFinite(Number(pos.accuracy))
+          ? Number(pos.accuracy)
+          : null;
+      const prevBearing = useFlowStore.getState().bearing;
+      const guided = getGuidanceBearing({
+        pos,
+        steps,
+        targetIndex,
+        accuracyM,
+        prevBearing,
+        lockedAtStart,
+      });
+      const bearing = guided.bearing;
+      if (guided.mode !== lastBearingModeRef.current) {
+        lastBearingModeRef.current = guided.mode;
+        console.log(
+          `[NAV] arrow bearing=${guided.mode}` +
+            ` acc=${accuracyM != null ? Math.round(accuracyM) : 'n/a'}m` +
+            ` seg=${guided.segmentBearing != null ? Math.round(guided.segmentBearing) : 'n/a'}°` +
+            ` gps=${guided.preciseBearing != null ? Math.round(guided.preciseBearing) : 'n/a'}°`,
+        );
+      }
       // heading 미확보 시 destinationAngle을 0으로 덮지 않음 (GPS 틱이 화살표를 북쪽으로 리셋하던 버그)
       const destinationAngle =
-        headingReady && heading != null
+        headingReady && heading != null && bearing != null
           ? getArrowRotation(bearing, heading)
           : null;
 
@@ -393,7 +414,12 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
         prevRaw != null && rawDistanceM <= prevRaw - WRONG_DIRECTION_AWAY_M;
       prevRawDistanceRef.current = rawDistanceM;
 
-      if (facingOpposite || movingAway) {
+      // 저정확도(실내)에서는 GPS/방위 흔들림으로 반대방향 오탐하지 않음
+      const accuracyLow =
+        guided.accuracyLow || (accuracyM != null && accuracyM > LOW_ACCURACY_M);
+      if (accuracyLow) {
+        wrongDirHitsRef.current = Math.max(0, wrongDirHitsRef.current - 1);
+      } else if (facingOpposite || movingAway) {
         wrongDirHitsRef.current += 1;
       } else if (!facingOpposite && movingCloser) {
         wrongDirHitsRef.current = 0;
@@ -447,6 +473,7 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
           headingReady,
           overshoot: isOvershoot,
           altRoute: nextAltRoute,
+          accuracyM,
         };
         if (heading != null) navPatch.heading = heading;
         if (destinationAngle != null) navPatch.destinationAngle = angleShown;
@@ -498,24 +525,47 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
       headingReadyRef.current = true;
       const {
         position,
-        destination: dest,
         overshoot,
         routeSteps,
         currentStepIndex,
         distanceM,
+        bearing: prevBearing,
+        accuracyM: storeAccuracyM,
       } = useFlowStore.getState();
 
       setNavigation({ heading, headingReady: true });
 
-      // localization 전에는 출발 노드를 겨냥 (store destination은 아직 다음 노드일 수 있음)
       const locked = !startEngagedRef.current;
-      const aim = locked && routeSteps?.[0]?.lat != null ? routeSteps[0] : dest;
-      if (!aim?.lat || !aim?.lng || !position?.lat || !position?.lng) return;
+      if (!position?.lat || !position?.lng || !routeSteps?.length) return;
 
-      const bearing = getBearing(position.lat, position.lng, aim.lat, aim.lng);
+      const targetIndex = locked
+        ? Math.min(1, Math.max(0, routeSteps.length - 1))
+        : Math.max(0, Math.min(currentStepIndex, routeSteps.length - 1));
+      const accuracyM =
+        storeAccuracyM != null && Number.isFinite(Number(storeAccuracyM))
+          ? Number(storeAccuracyM)
+          : position.accuracy != null && Number.isFinite(Number(position.accuracy))
+            ? Number(position.accuracy)
+            : null;
+
+      const guided = getGuidanceBearing({
+        pos: position,
+        steps: routeSteps,
+        targetIndex,
+        accuracyM,
+        prevBearing,
+        lockedAtStart: locked,
+      });
+      if (guided.bearing == null) return;
+
+      const bearing = guided.bearing;
       const destinationAngle = getArrowRotation(bearing, heading);
 
-      if (Math.abs(destinationAngle) >= WRONG_DIRECTION_ANGLE_DEG) {
+      const accuracyLow =
+        guided.accuracyLow || (accuracyM != null && accuracyM > LOW_ACCURACY_M);
+      if (accuracyLow) {
+        wrongDirHitsRef.current = Math.max(0, wrongDirHitsRef.current - 1);
+      } else if (Math.abs(destinationAngle) >= WRONG_DIRECTION_ANGLE_DEG) {
         wrongDirHitsRef.current += 1;
       } else {
         wrongDirHitsRef.current = Math.max(0, wrongDirHitsRef.current - 1);
@@ -543,6 +593,7 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
           bearing,
           destinationAngle: angleShown,
           overshoot: isOvershoot,
+          accuracyM,
         });
       }
       mapInstance?.setMarkerRotation?.(heading);
@@ -572,6 +623,7 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
     compassHeardRef.current = false;
     reroutingRef.current = false;
     lastRerouteAtRef.current = 0;
+    lastBearingModeRef.current = '';
     const steps = useFlowStore.getState().routeSteps || [];
     const firstTarget = steps.length > 1 ? 1 : 0;
     const first = steps[0];
@@ -600,6 +652,7 @@ function useNavigationTracking({ enabled = true, onArrived } = {}) {
       isTracking: true,
       overshoot: false,
       altRoute: false,
+      accuracyM: null,
     });
     startWatch((raw, geoPos) => handlePositionUpdateRef.current(raw, geoPos));
     startListening((heading) => handleHeadingUpdateRef.current(heading));

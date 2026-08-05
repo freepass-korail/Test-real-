@@ -31,6 +31,24 @@ describe('getDeviceHeading', () => {
     ).toBeNull();
   });
 
+  it('rejects webkit heading when accuracy is worse than 25° (indoor magnetic noise)', () => {
+    expect(
+      getDeviceHeading({
+        webkitCompassHeading: 90,
+        webkitCompassAccuracy: 30,
+      }),
+    ).toBeNull();
+  });
+
+  it('accepts webkit heading at the 25° accuracy boundary', () => {
+    const result = getDeviceHeading({
+      webkitCompassHeading: 12,
+      webkitCompassAccuracy: 25,
+    });
+    expect(result).not.toBeNull();
+    expect(result.heading).toBeCloseTo(12, 5);
+  });
+
   it('accepts deviceorientationabsolute', () => {
     const result = getDeviceHeading({
       type: 'deviceorientationabsolute',

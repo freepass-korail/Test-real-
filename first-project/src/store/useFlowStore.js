@@ -71,6 +71,8 @@ const useFlowStore = create((set, get) => ({
   geoError: null,
   overshoot: false,
   altRoute: false,
+  /** GPS coords.accuracy (m) — 실내 화살표/오탐 완화용 */
+  accuracyM: null,
 
   setStep: (nextStep) => {
     set({ step: nextStep });
@@ -388,6 +390,7 @@ const useFlowStore = create((set, get) => ({
       geoError: null,
       overshoot: false,
       altRoute: false,
+      accuracyM: null,
     });
   },
 }));

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { HEADING_DEADBAND_DEG, normalizeAngle, shortestAngleDelta } from '../utils/geo';
+import { COMPASS_MAX_ACCURACY_DEG, HEADING_DEADBAND_DEG, normalizeAngle, shortestAngleDelta } from '../utils/geo';
 import useStationary from './useStationary';
 
 /** 화면 위쪽이 향하는 쪽 기준 보정 (세로/가로 회전) */
@@ -29,12 +29,15 @@ export function getDeviceHeading(event) {
   //    screen.orientation을 또 빼면 가로/일부 iOS에서 화살표가 90°·반대로 틀어짐
   if (event.webkitCompassHeading != null && !Number.isNaN(Number(event.webkitCompassHeading))) {
     // webkitCompassAccuracy < 0 → 헤딩 무효 (Apple)
+    // > COMPASS_MAX_ACCURACY_DEG → 역사 내부 자기장 왜곡 — 마지막 정상값 유지
     if (
       event.webkitCompassAccuracy != null &&
-      !Number.isNaN(Number(event.webkitCompassAccuracy)) &&
-      Number(event.webkitCompassAccuracy) < 0
+      !Number.isNaN(Number(event.webkitCompassAccuracy))
     ) {
-      return null;
+      const acc = Number(event.webkitCompassAccuracy);
+      if (acc < 0 || acc > COMPASS_MAX_ACCURACY_DEG) {
+        return null;
+      }
     }
     return {
       heading: normalizeAngle(Number(event.webkitCompassHeading)),

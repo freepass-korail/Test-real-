@@ -262,6 +262,13 @@ export function normalizeRouteStep(raw) {
     throw new Error(`유효하지 않은 step 좌표: nodeId=${raw.nodeId ?? raw.node_id}`);
   }
 
+  const num = (...candidates) => {
+    for (const c of candidates) {
+      if (c != null && !Number.isNaN(Number(c))) return Number(c);
+    }
+    return null;
+  };
+
   return {
     order: Number(raw.order ?? 0),
     nodeId: String(raw.nodeId ?? raw.node_id ?? ''),
@@ -270,6 +277,11 @@ export function normalizeRouteStep(raw) {
     lng,
     layer: raw.layer != null ? Number(raw.layer) : undefined,
     instruction: String(raw.instruction ?? ''),
+    maneuver: raw.maneuver ?? null,
+    // 구간 진행 방위 — 실내에서 GPS와 무관한 화살표 기준 (getRouteSegmentBearing)
+    headingBearing: num(raw.headingBearing, raw.heading_bearing),
+    distanceToNextM: num(raw.distanceToNextM, raw.distance_to_next_m),
+    cumulativeDistanceM: num(raw.cumulativeDistanceM, raw.cumulative_distance_m),
   };
 }
 

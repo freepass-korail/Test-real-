@@ -124,6 +124,196 @@ export function getArrowAimPoint(pos, steps = [], targetIndex = 0) {
   };
 }
 
+/**
+ * GPS 품질 대비 목표 거리 — 이 비율 이하면 노드 정밀 조준을 신뢰.
+ * (accuracy < distToTarget * 0.5)
+ */
+export const BEARING_TRUST_RATIO = 0.5;
+
+/**
+ * GPS 품질 대비 목표 거리 — 이 비율 이상이면 구간 복도 방위만 사용.
+ * (accuracy >= distToTarget)
+ */
+export const BEARING_DEGRADE_RATIO = 1.0;
+
+/** 이 accuracy(m) 초과면 실내 저정확도로 보고 UI·오탐을 완화 */
+export const LOW_ACCURACY_M = 25;
+
+/** iOS webkitCompassAccuracy(°) — 이 값 초과면 자기장 왜곡으로 보고 헤딩 무시 */
+export const COMPASS_MAX_ACCURACY_DEG = 25;
+
+/**
+ * 경로 구간 진행 방위(°). BE headingBearing 우선, 없으면 노드 간 Haversine 방위.
+ * @param {Array<{ lat?: number, lng?: number, headingBearing?: number|null }>} steps
+ * @param {number} segmentIndex — steps[i] → steps[i+1]
+ * @returns {number | null}
+ */
+export function getRouteSegmentBearing(steps = [], segmentIndex = 0) {
+  if (!steps.length) return null;
+  const lastSeg = Math.max(0, steps.length - 2);
+  const i = Math.max(0, Math.min(Number(segmentIndex) || 0, lastSeg));
+  const a = steps[i];
+  const b = steps[i + 1];
+  if (!a?.lat || !a?.lng) return null;
+
+  if (a.headingBearing != null && !Number.isNaN(Number(a.headingBearing))) {
+    return normalizeAngle(Number(a.headingBearing));
+  }
+  if (!b?.lat || !b?.lng) return null;
+  return getBearing(a.lat, a.lng, b.lat, b.lng);
+}
+
+function lerpLatLng(a, b, t) {
+  const tt = Math.max(0, Math.min(1, t));
+  return {
+    lat: a.lat + (b.lat - a.lat) * tt,
+    lng: a.lng + (b.lng - a.lng) * tt,
+  };
+}
+
+function blendBearings(fromDeg, toDeg, t) {
+  const tt = Math.max(0, Math.min(1, t));
+  return normalizeAngle(fromDeg + shortestAngleDelta(fromDeg, toDeg) * tt);
+}
+
+/**
+ * 화살표/나침반 점용 안내 방위.
+ * GPS 오차가 목표 거리보다 크면 "내 점→노드" 대신 현재 구간 복도 방향을 쓴다.
+ *
+ * @param {{
+ *   pos: { lat: number, lng: number },
+ *   steps?: Array,
+ *   targetIndex?: number,
+ *   accuracyM?: number|null,
+ *   prevBearing?: number|null,
+ *   lockedAtStart?: boolean,
+ * }} args
+ * @returns {{
+ *   bearing: number|null,
+ *   mode: 'segment'|'precise'|'blend',
+ *   accuracyLow: boolean,
+ *   segmentBearing: number|null,
+ *   preciseBearing: number|null,
+ * }}
+ */
+export function getGuidanceBearing({
+  pos,
+  steps = [],
+  targetIndex = 0,
+  accuracyM = null,
+  prevBearing = null,
+  lockedAtStart = false,
+} = {}) {
+  const empty = {
+    bearing: null,
+    mode: 'segment',
+    accuracyLow: true,
+    segmentBearing: null,
+    preciseBearing: null,
+  };
+  if (!pos?.lat || !pos?.lng || !steps.length) return empty;
+
+  const lastIdx = steps.length - 1;
+  const clampedTarget = Math.max(0, Math.min(Number(targetIndex) || 0, lastIdx));
+  const dest = steps[clampedTarget];
+  if (!dest?.lat || !dest?.lng) return empty;
+
+  const closest = getClosestPointOnRoute(pos, steps);
+  let segmentIndex = lockedAtStart
+    ? 0
+    : Math.max(0, Math.min(closest.segmentIndex, Math.max(0, lastIdx - 1)));
+  // 목표 노드 구간: target가 i면 보통 i-1→i 위를 걷는다 (시작이면 0→1)
+  if (!lockedAtStart && clampedTarget > 0) {
+    segmentIndex = Math.min(segmentIndex, clampedTarget - 1);
+  }
+
+  const segmentBearing = getRouteSegmentBearing(steps, segmentIndex);
+
+  const a = steps[segmentIndex];
+  const b = steps[Math.min(segmentIndex + 1, lastIdx)];
+  const projected =
+    a?.lat && b?.lat && steps.length > 1
+      ? lerpLatLng(a, b, closest.t)
+      : { lat: pos.lat, lng: pos.lng };
+
+  const aimPoint =
+    lockedAtStart || clampedTarget >= lastIdx
+      ? dest
+      : (getArrowAimPoint(projected, steps, clampedTarget) ?? dest);
+  const preciseBearing =
+    aimPoint?.lat != null && aimPoint?.lng != null
+      ? getBearing(projected.lat, projected.lng, aimPoint.lat, aimPoint.lng)
+      : null;
+
+  const distToTarget = getDistanceMeters(pos.lat, pos.lng, dest.lat, dest.lng);
+  const acc =
+    accuracyM != null && Number.isFinite(Number(accuracyM)) ? Math.max(0, Number(accuracyM)) : null;
+  const accuracyLow = acc == null ? distToTarget <= LOW_ACCURACY_M : acc > LOW_ACCURACY_M;
+
+  // 세그먼트 방위가 없으면 정밀만, 정밀이 없으면 세그먼트만
+  if (segmentBearing == null && preciseBearing == null) return empty;
+  if (segmentBearing == null) {
+    return {
+      bearing: preciseBearing,
+      mode: 'precise',
+      accuracyLow,
+      segmentBearing: null,
+      preciseBearing,
+    };
+  }
+  if (preciseBearing == null) {
+    return {
+      bearing: segmentBearing,
+      mode: 'segment',
+      accuracyLow,
+      segmentBearing,
+      preciseBearing: null,
+    };
+  }
+
+  const ratio = distToTarget > 1e-3 ? (acc ?? LOW_ACCURACY_M) / distToTarget : Infinity;
+  let wPrecise;
+  if (acc == null) {
+    // accuracy 미보고: 목표가 가까우면 구간 방위 우선
+    wPrecise = distToTarget > LOW_ACCURACY_M ? 0.35 : 0;
+  } else if (ratio <= BEARING_TRUST_RATIO) {
+    wPrecise = 1;
+  } else if (ratio >= BEARING_DEGRADE_RATIO) {
+    wPrecise = 0;
+  } else {
+    wPrecise =
+      1 -
+      (ratio - BEARING_TRUST_RATIO) / (BEARING_DEGRADE_RATIO - BEARING_TRUST_RATIO);
+  }
+
+  // 히스테리시스: 직전 방위가 있으면 모드 경계에서 급변 완화
+  if (prevBearing != null && Number.isFinite(Number(prevBearing))) {
+    const towardSegment = shortestAngleDelta(Number(prevBearing), segmentBearing);
+    const towardPrecise = shortestAngleDelta(Number(prevBearing), preciseBearing);
+    if (wPrecise > 0.2 && wPrecise < 0.8) {
+      // 직전 값에 더 가까운 쪽을 약간 가중
+      if (Math.abs(towardSegment) + 8 < Math.abs(towardPrecise)) {
+        wPrecise = Math.max(0, wPrecise - 0.2);
+      } else if (Math.abs(towardPrecise) + 8 < Math.abs(towardSegment)) {
+        wPrecise = Math.min(1, wPrecise + 0.2);
+      }
+    }
+  }
+
+  let mode = 'blend';
+  if (wPrecise <= 0.05) mode = 'segment';
+  else if (wPrecise >= 0.95) mode = 'precise';
+
+  const bearing = blendBearings(segmentBearing, preciseBearing, wPrecise);
+  return {
+    bearing,
+    mode,
+    accuracyLow,
+    segmentBearing,
+    preciseBearing,
+  };
+}
+
 /** 나침반 링 위 목적지 점 좌표 (0°=위, 시계방향) */
 export function getCompassDotPosition(cx, cy, radius, angleDeg, dotWidth, dotHeight) {
   const rad = (angleDeg * Math.PI) / 180;

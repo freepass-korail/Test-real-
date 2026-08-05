@@ -7,8 +7,10 @@ import {
   getArrowRotation,
   getBearing,
   getDistanceMeters,
+  getGuidanceBearing,
   getProgressAlongRouteM,
   getRemainingToTargetM,
+  getRouteSegmentBearing,
   findNearestNode,
   getStepArrivalRadiusM,
   gateProgressFromStart,
@@ -475,5 +477,56 @@ describe('smoothLatLng', () => {
 
   it('GPS_SOFT_ACCURACY_M is stricter than GPS_MAX_ACCURACY_M (soft/hard cut ordering)', () => {
     expect(GPS_SOFT_ACCURACY_M).toBeLessThan(GPS_MAX_ACCURACY_M);
+  });
+});
+
+describe('getRouteSegmentBearing / getGuidanceBearing', () => {
+  const steps = ensureStepDistances([
+    { ...node('n01', 0), headingBearing: 90 },
+    node('n02', 12),
+    node('n03', 40),
+  ]);
+
+  it('prefers BE headingBearing when present', () => {
+    expect(getRouteSegmentBearing(steps, 0)).toBeCloseTo(90, 5);
+  });
+
+  it('falls back to node-to-node bearing when headingBearing is missing', () => {
+    const noBe = ensureStepDistances([node('a', 0), node('b', 20)]);
+    expect(getRouteSegmentBearing(noBe, 0)).toBeCloseTo(90, 0);
+  });
+
+  it('uses segment corridor bearing when accuracy (30m) exceeds distToTarget (~12m)', () => {
+    // GPS를 경로에서 북쪽으로 크게 밀어도 구간 방위(~90°)를 유지해야 함
+    const noisy = {
+      lat: steps[0].lat + 25 / METERS_PER_DEG_LAT,
+      lng: steps[0].lng + 2 / METERS_PER_DEG_LNG,
+    };
+    const guided = getGuidanceBearing({
+      pos: noisy,
+      steps,
+      targetIndex: 1,
+      accuracyM: 30,
+    });
+    expect(guided.mode).toBe('segment');
+    expect(guided.accuracyLow).toBe(true);
+    expect(guided.bearing).toBeCloseTo(90, 0);
+
+    // 원시 pos→노드 방위는 북쪽(~0°)에 가까워 틀림 — 안내 방위는 그걸 쓰지 않음
+    const rawBearing = getBearing(noisy.lat, noisy.lng, steps[1].lat, steps[1].lng);
+    expect(Math.abs(shortestAngleDelta(guided.bearing, rawBearing))).toBeGreaterThan(40);
+  });
+
+  it('uses precise aiming when accuracy (3m) is much better than distToTarget (~20m)', () => {
+    const pos = { lat: steps[0].lat, lng: steps[0].lng };
+    const guided = getGuidanceBearing({
+      pos,
+      steps: ensureStepDistances([node('a', 0), node('b', 20), node('c', 40)]),
+      targetIndex: 1,
+      accuracyM: 3,
+    });
+    expect(guided.mode).toBe('precise');
+    expect(guided.accuracyLow).toBe(false);
+    expect(guided.bearing).toBeCloseTo(90, 0);
   });
 });
