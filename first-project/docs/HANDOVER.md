@@ -220,6 +220,41 @@ BE (현재): `http://43.201.30.167:8080`
 | 지도 SDK (카카오/네이버 등) | 미연동 — `MapContainer` mock |
 | 브라우저 센서 | Geolocation + DeviceOrientation + Vibration |
 
+### 3.5 브라우저·OS별 나침반
+
+나침반 로직은 OS마다 **다른 API 경로**를 탄다. Android에서 “25° accuracy 게이트가 안 먹는다”고 FE 버그로 보지 말 것.
+
+코드: [`src/hooks/useDeviceOrientation.js`](../src/hooks/useDeviceOrientation.js) (`getDeviceHeading`), 상수 `COMPASS_MAX_ACCURACY_DEG = 25` (`geo.js`).
+
+| 플랫폼 | 쓰는 필드 | accuracy 게이트 | 비고 |
+|--------|-----------|-----------------|------|
+| **iOS Safari** | `webkitCompassHeading` + `webkitCompassAccuracy` | `acc < 0` 또는 `acc > 25°` → heading **버림**(마지막 정상값 유지) | 역사 자기장 왜곡 대응의 핵심. **이 경로에서만** 게이트 동작 |
+| **Android Chrome** | `deviceorientationabsolute` / `absolute === true`의 `alpha` | **`webkitCompassAccuracy` 자체가 없음** → 25° 무시 로직 **미적용** | absolute가 아니면 `null`(미확보). 틀린 상대방위 대신 화살표 미표시 |
+| 카톡 등 인앱 | 권한·센서 제한 흔함 | 플랫폼에 따름 | Safari/Chrome 직접 실행 권장 |
+
+후임 체크:
+
+- Android에서 accuracy 게이트가 “안 도는” 것은 **의도된 플랫폼 분기**
+- 화살표가 안 돌면: `headingReady`, absolute 이벤트 수신 여부, 모션/방향 권한부터 확인
+- 실측은 **iOS Safari와 Android Chrome 둘 다** (한쪽에만 맞춰 고치면 다른 쪽이 깨짐)
+
+### 3.6 장애 시 프론트 동작 (BE 다운·네트워크)
+
+`apiRequest`([`client.js`](../src/api/client.js))는 **재시도·백오프 없음**. `!ok` → `ApiError` throw, 네트워크 실패는 `fetch` reject 그대로.
+
+| 상황 | 현재 UI/동작 | 자동 재시도? | 파일 |
+|------|--------------|--------------|------|
+| `navigator.onLine === false` | 전체 오버레이 “연결이 잠시 끊겼어요. 다시 연결 중이에요.” + 스피너 | **없음** — online 되면 오버레이만 사라짐 (API 재호출 안 함) | `NetworkOfflineOverlay.jsx` |
+| BE 다운·타임아웃·5xx (진입 bootstrap) | 상단 빨간 `sessionError` 배너. 부트스트랩 실패 상태 | **없음** | `App.jsx`, `client.js`, `bootstrapGuide.js` |
+| 오늘 티켓 없음 | 화면 `E3` | — | `bootstrapGuide` → `NO_TICKET_TODAY` |
+| S4 경로 로드 실패 | `setStep('E1')` | 없음 | `S4_Standby.jsx` |
+| S5 이탈 재탐색 실패 | 빨간 이탈(`altRoute`) 유지, 콘솔 `[NAV] reroute failed` | 쿨다운 후 이탈이 다시 잡힐 때만 재시도 | `useNavigationTracking.js` `requestReroute` |
+
+중요한 구분:
+
+- **기기 오프라인** 오버레이 ≠ **BE health check**. BE만 죽은 경우에도 `navigator.onLine`은 true일 수 있어, 오프라인 UI가 안 뜨고 진입 에러 배너만 나올 수 있다.
+- 진입 실패를 무한 로딩으로 감추지는 않음(배너). 다만 **수동/자동 재시도 UX·Sentry는 없음** → 실서비스에서 가장 먼저 터지는 빈칸 (§5.3).
+
 ---
 
 ## 4. 배포 및 운영
@@ -279,25 +314,35 @@ $env:E2E_TICKET_ID='51'; npm run test:e2e:demo -- -g "1_해피케이스"
 
 - E2E: GPS만 시나리오 주입, `guide`/TTS는 **실제 BE** → BE 기동·티켓 필요
 - 상세: [`../e2e/README.md`](../e2e/README.md)
-- 실측: iOS Safari + Android Chrome, 역사/승강장에서 S5. 콘솔 `[NAV]`, `[TTS]`
+- 실측: **iOS Safari + Android Chrome** 둘 다 (나침반 경로가 다름 — §3.5). 역사/승강장 S5. 콘솔 `[NAV]`, `[TTS]`
+- BE 장애 수동 확인: BE 중지 후 `/?ticketId=` → 상단 빨간 배너(§3.6). 비행기 모드 → 오프라인 오버레이(재호출은 안 함)
 
 ### 5.2 알려진 한계
 
-- 실내 GPS 오차(자주 10~30m+). 저정확도 시 화살표는 BE `headingBearing` 우선
-- BE `distanceToNextM`과 lat/lng Haversine이 어긋날 수 있음 → FE만으로 완전 보정 불가
-- 안내 문구 속 `m`는 BE 고정 `screenText`, 큰 숫자는 라이브 remain → 어긋날 수 있음
-- session 재개 꺼짐 / 지도는 mock / 모니터링·GA 없음
-- BE가 꺼지면 경로·TTS 불가
+상태 의미: **완전 해결** / **부분 해결** / **미해결**.  
+“BE가 거리를 고쳤다”는 말만으로 해결로 치지 말 것 — **좌표·문구·재실측**으로 확인할 때까지는 열린 이슈다.
+
+| 이슈 | 상태 | 재현 조건 | 관련 파일 |
+|------|------|-----------|-----------|
+| 실내 GPS 위치·화살표 흔들림 | **부분 해결** | 제천역 승강장·실내. accuracy 나쁨 때 화살표가 옆으로 튐 → 저정확도면 `headingBearing` 복도 방위 우선으로 완화. GPS 오차(자주 10~30m+) 자체는 웹으로 제거 불가 | `geo.js` (`getGuidanceBearing`, `LOW_ACCURACY_M`), `useNavigationTracking.js`, `S5_Navigation.jsx` |
+| n02→n03 등 BE 거리↔좌표 불일치 | **미해결(데이터)** | guide의 `distanceToNextM`과 lat/lng Haversine이 어긋남(과거 예: BE ~19m vs 좌표 ~수십 m). UI remain은 BE 거리, 투영·폴백 방위는 좌표 → “걸어도 m가 이상/구간 불분명”. **BE가 거리만 수정했다고 해도 좌표·재실측 전까지 해결로 보지 말 것. FE 완결 수정 아님** | `normalize.js` (`fillStepDistances`), `geo.js` remain·투영 |
+| 문구 속 m vs 상단 라이브 m | **미해결(계약)** | S5에서 `screenText`의 `19m` 등과 큰 숫자 remain이 동시에 다름. 전자는 BE 고정 문구 | `useFlowStore`, `guide/steps` / `screenTextMap` |
+| 초반 n01·n02 스킵·안내 점프 | **부분 해결** | 첫 GPS가 멀리(에스컬레이터 등)로 튈 때. 출발 잠금·`EARLY_*` 점프/스냅으로 FE 완화 | `geo.js` (`gateProgressFromStart`, `EARLY_*`, `START_ENGAGE_*`) |
+| sessionStorage 재개 시 조기 도착 | **완전 해결(의도적 비활성)** | (옛) 새로고침 후 잔여 `routeSteps`+GPS로 곧장 도착. 지금은 저장·복원 끔 → 항상 S1 | `utils/session.js` |
+| 지도 영역 | **미해결(미구현)** | S5 등에서 지도 SDK 없음, placeholder | `MapContainer.jsx` |
+| 모니터링 / GA | **미해결** | 프로덕션 에러·사용량 추적 없음 | — |
+| BE 다운 시 UX | **미해결** | BE 중지 후 진입 → 배너만, 재시도 없음. 오프라인 UI는 BE 장애와 무관할 수 있음 (§3.6) | `App.jsx`, `client.js`, `NetworkOfflineOverlay.jsx` |
 
 ### 5.3 실서비스로 이어갈 때 우선 과제 (예시)
 
-1. BE HTTPS·안정 도메인 + `vercel.json`/프록시 정리  
-2. BE 거리↔좌표·문구 `m` 정합  
-3. 에러 모니터링(Sentry 등)·실측 로그 정책  
-4. “이어하기” 세션이 필요하면 조기 도착 버그 없이 재설계  
-5. 인앱 브라우저 UX (“Safari에서 열기”) 고정  
-6. 실제 지도 SDK 연동 여부 결정 (`MapContainer` 교체)  
-7. UWB/네이티브는 **별 트랙** — 현 웹 스택으로는 불가에 가까움
+1. **BE 장애 화면 + 수동/자동 재시도** (진입·재탐색). 오프라인 오버레이와 BE health 구분  
+2. BE HTTPS·안정 도메인 + `vercel.json`/프록시 정리  
+3. BE 거리↔좌표·문구 `m` 정합 (n02→n03 등 **데이터 재검증**)  
+4. 에러 모니터링(Sentry 등)·실측 로그 정책  
+5. “이어하기” 세션이 필요하면 조기 도착 버그 없이 재설계  
+6. 인앱 브라우저 UX (“Safari에서 열기”) 고정  
+7. 실제 지도 SDK 연동 여부 결정 (`MapContainer` 교체)  
+8. UWB/네이티브는 **별 트랙** — 현 웹 스택으로는 불가에 가까움
 
 ### 5.4 관련 문서
 
